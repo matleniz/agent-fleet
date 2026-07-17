@@ -153,17 +153,25 @@ so a constrained box opts in. It respects a `NODE_OPTIONS` you already export an
 is inherited by node the worker itself spawns (a task's `npm run build`), so size
 it above a legitimate build; the knob is the escape hatch.
 
-**Small-box preset.** On a constrained machine (e.g. WSL2 with ~8 GiB, where the
-VM has no memory cap and node CLIs leak), put the tighter numbers in a
+**Small-box preset.** On a memory-constrained machine, put tighter numbers in a
 `machines/local.env` (`MACHINE_HOST=local`) so they stay machine-specific:
 ```sh
 MACHINE_MAX_WORKERS=2
 MACHINE_MIN_FREE_MB=3072
 WORKER_NODE_MAX_MB=2048
 ```
-The biggest single lever on WSL2 lives outside the repo: cap and reclaim the VM
-itself in `%USERPROFILE%\.wslconfig` (`memory=`, `swap=`, `autoMemoryReclaim=gradual`),
-then `wsl --shutdown`, so even a worker OOM cannot freeze Windows.
+The biggest lever, though, is outside the repo: **bound the memory of the
+environment the fleet runs in**, so a worker OOM stays contained instead of taking
+the whole host down. How depends on the platform:
+- **Linux (bare metal / VM):** run the fleet under a cgroup memory cap, e.g.
+  `systemd-run --user --scope -p MemoryMax=6G -p MemorySwapMax=8G fleet …`, and
+  give the box swap so spikes are absorbed rather than OOM-killing blindly.
+- **Container (the `deploy/` image):** set `--memory` / `mem_limit` on the
+  container, so Docker caps the whole fleet.
+- **WSL2:** the VM has no memory cap and does not reclaim by default, so cap and
+  reclaim it in `%USERPROFILE%\.wslconfig` (`memory=`, `swap=`,
+  `autoMemoryReclaim=gradual`), then `wsl --shutdown` — otherwise a worker OOM can
+  freeze Windows itself.
 
 **Teardown reaper.** `fleet del` / `fleet prune` remove the worktree *and* kill
 the worker's tmux window and GC its dispatch sidecars (`.status` / `.meta`) — a
