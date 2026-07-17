@@ -58,6 +58,26 @@ instead: ntfy notifications (claude pack hooks + `bin/fleet-notify`) and
 
 ## Bigger bets (wait for a real need)
 
+- **Generic (CLI-agnostic) MCP loader via mount namespace** — make `WORKER_MCP`
+  work for the CLIs with no native per-project MCP scoping (cursor, copilot,
+  antigravity) by generalizing the hub barrier's mechanism (`packs/hub-mount-ns.sh`,
+  `_fleet_hub_ro_exec`: `unshare --user --mount` + `mount --bind`). At launch, read
+  the CLI's real global MCP config, write a per-worker filtered copy (only the
+  allowlisted `mcpServers`; all three use that key), and `mount --bind` it
+  read-only OVER the real path inside the worker's private namespace — so the
+  worker sees only the allowed servers, the host + other workers are untouched, and
+  auth is preserved (only the MCP file is overlaid, not the whole config home).
+  Concurrency-safe (per-worker namespace + temp file); no global mutation (unlike
+  `agent mcp disable`, which is why cursor was ruled out natively). Contract: an
+  optional `pack_mcp_config_path` per pack echoing the file the CLI reads MCP from
+  (cursor `~/.cursor/mcp.json`, copilot `${COPILOT_HOME:-~/.copilot}/mcp-config.json`,
+  antigravity `~/.gemini/config/mcp_config.json`). Mirrors the barrier split:
+  native where the CLI supports it (gemini/opencode/claude), mount-ns loader as
+  the fallback. Two design rules: **fail-OPEN** (it's a token optimization, not
+  security — launch unfiltered if userns is unavailable, never block a worker), and
+  it applies at LAUNCH (pack_launch), not pack_worker_setup. Needs unprivileged
+  userns (copilot/antigravity already require it; cursor would newly need mount-ns).
+
 - **State from transcripts + mobile approvals** — parse Claude Code JSONL
   transcripts for blocked/waiting/done + a PWA to approve from the phone
   (Tailscale). Overlaps with ntfy for less effort today.
