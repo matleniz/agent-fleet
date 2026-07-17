@@ -50,6 +50,7 @@ for c in "${CASES[@]}"; do
   (
     PATH="$stub:$PATH"
     case "$pack" in antigravity|copilot) export HUB="$rohub";; esac
+    source "$ENGINE/bin/fleet-config.sh"   # defines fleet_node_heap_guard (packs call it), as in production
     source "$ENGINE/packs/$pack/pack.sh"
     pack_launch_headless "TASK_$pack here"
   ) || true
@@ -67,11 +68,11 @@ echo "PASS (layer 1): every pack launches headless with bypass + task"
 # ---------- Layer 1b: claude honors an optional per-launch model ($2) ----------
 printf '#!/usr/bin/env bash\nprintf "%%s" "$*" > "$REC"\n' > "$stub/claude"; chmod +x "$stub/claude"
 : > "$REC"
-( PATH="$stub:$PATH"; source "$ENGINE/packs/claude/pack.sh"; pack_launch_headless "task" "opus" ) || true
+( PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"; pack_launch_headless "task" "opus" ) || true
 got="$(cat "$REC" 2>/dev/null || true)"
 case "$got" in *"--model opus"*) ;; *) fail "claude: --model not passed with \$2 (got: $got)";; esac
 : > "$REC"
-( PATH="$stub:$PATH"; source "$ENGINE/packs/claude/pack.sh"; pack_launch_headless "task" ) || true
+( PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"; pack_launch_headless "task" ) || true
 got="$(cat "$REC" 2>/dev/null || true)"
 case "$got" in *"--model"*) fail "claude: --model leaked with no \$2 (got: $got)";; *) ;; esac
 rm -f "$stub/claude"
@@ -84,6 +85,10 @@ fi
 
 ROOT="$HOME/fleet-sandbox"
 export FLEET_HOME="${FLEET_HOME:-$HOME/.config/fleet}"
+# The dispatch/worker windows run a bare `fleet` (production assumes ~/.local/bin
+# symlinks). Put the repo's bin/ on PATH so the detached window resolves it here
+# too — otherwise the worker never starts on a box without the symlinks (e.g. CI).
+export PATH="$ENGINE/bin:$PATH"
 "$SELF_DIR/make-sandbox.sh" "$ROOT" >/dev/null 2>&1 || fail "sandbox build failed"
 
 # A stub pack that writes a marker (the prompt it received) into the worktree
