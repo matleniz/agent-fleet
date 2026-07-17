@@ -13,31 +13,50 @@ trusted context through the same freshness / `propose-doc-change` path a worker
 uses — so a lesson lands where it will be front-loaded next time instead of being
 lost in a log.
 
-Shipped:
-- **Input** — `fleet chats --scan [--all] [--parse] [--json]`
-  (`bin/fleet-chats-scan.py`): fleet-wide inventory of every pack's recorded
-  conversation (hub + all worktrees, all projects), with `--parse` attaching a
-  claude-first method signal via `bin/fleet_chat_parse.py` (user corrections,
-  tool errors, tool histogram). Local machine only.
+Shipped as a **3-stage pipeline** (A extract / B compress / C distill + finalize;
+see `docs/04-routines.md` "The conversation-feedback pipeline"):
+- **A extract** — `fleet chats --scan [--all] [--parse] [--history] [--since ISO]
+  [--json]` (`bin/fleet-chats-scan.py`): fleet-wide inventory of every pack's
+  recorded conversation, with `--parse` attaching a claude-first method signal via
+  `bin/fleet_chat_parse.py` (user corrections, tool errors, tool histogram).
+  `--history` (the retro's real input) emits one entry per transcript file over the
+  `--since` window, **including finished workers whose worktree was deleted** — the
+  default scan only gives the latest pointer per live worktree, which misses almost
+  all history on a fleet that deletes workers. Claude-first via `pack_chat_history`;
+  packs without it fall back to the default per-location scan. Deterministic, no
+  model. Local machine only.
+- **B compress** — the `conversation-compress` skill (`templates/skills/`): cheap
+  model, frequent, LOCAL (the confidentiality + compression boundary). One session
+  note per new transcript at `$FLEET_HOME/feedback-notes/<session_id>.json`; the
+  note's existence is the dedup. Extractive only.
+- **C distill + finalize** — the `conversation-feedback` skill: strong model,
+  rarer; reasoning runs local OR off-box (`FEEDBACK_RUNNER`), but dedup + filing +
+  digest always local. Routes each lesson by target: `project` → per-project queue
+  (`type:doc-proposal` / `type:workflow`), `global` and `upstream` → the dated
+  digest (`$FLEET_HOME/feedback-digests/`). Report-only and mechanical.
 - **Dedup** — a machine-wide "seen ledger", `fleet feedback seen/record/list/prune`
   (`bin/fleet-feedback.py`, at `$FLEET_HOME/feedback-seen.json`), so a lesson is
   not re-filed every run; recurrence count is itself signal.
-- **Method + hybrid output** — the `conversation-feedback` skill
-  (`templates/skills/`): per-project queue proposals (`type:doc-proposal` /
-  `type:workflow`) **plus** a dated global digest under
-  `$FLEET_HOME/feedback-digests/`. Report-only and mechanical.
-- **Tests** — `test/test-chats-scan.sh` (scanner + parser + ledger).
+- **Knobs** — `fleet feedback config` reports `FEEDBACK_MODEL_COMPRESS` /
+  `FEEDBACK_MODEL_DISTILL` / `FEEDBACK_RUNNER` (defaults in `default.env`; built-ins
+  haiku/sonnet/local). No `bin/` script calls a model — the model rides the existing
+  `pack_launch_headless <prompt> <model>` path.
+- **Tests** — `test/test-chats-scan.sh` (scanner + parser + ledger),
+  `test/test-feedback-pipeline.sh` (note dedup, `feedback config`, finalize routing).
 
 Remaining:
-- **Scheduling wiring is instance-side** (not repo code): install the local job
-  (SessionStart hook on claude/gemini, else OS cron), throttled; a human launches
-  the first validation run and installs the hook (`docs/04` gotchas).
+- **Scheduling wiring is instance-side** (not repo code): install the two local
+  jobs (B frequent, C rarer) as a SessionStart hook on claude/gemini, else OS cron,
+  throttled; a human launches the first validation run and installs the hook
+  (`docs/04` gotchas).
+- **The cloud/ssh runner for C** is instance-side too: shipping the notes to a
+  cloud agent and getting candidate lessons back. The repo ships the contract +
+  the local default (`FEEDBACK_RUNNER=local`); a cloud plug is wired per instance,
+  following the `fleet status --remote` ssh pattern for the ssh case.
 - **Non-claude transcript parsers** (gemini `chats/`, antigravity SQLite, copilot
   session-state, cursor, opencode) — inventory-only today; each plugs in at the
   parser layer (`fleet_chat_parse.detect_format` + a sibling parser), no scanner
   change. Deferred until needed.
-- **Cross-machine** — local only today; a remote would follow the
-  `fleet status --remote` ssh pattern.
 
 Why now: the fleet already scales *work* across many sessions but has no loop that
 scales *learning* from them; every session repeats avoidable mistakes.

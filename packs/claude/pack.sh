@@ -80,6 +80,43 @@ pack_chat_pointer() {
   ls -t "$d"/*.jsonl 2>/dev/null | head -1
 }
 
+# Emit one TSV line per *.jsonl in <dir> newer than <since_epoch> ("" = no floor):
+# <role>\t<worktree>\t<cwd>\t<path>\t<mtime>. Helper for pack_chat_history.
+_claude_emit_transcripts() {  # <role> <worktree> <cwd> <dir> <since_epoch>
+  local role="$1" wtn="$2" cwd="$3" dir="$4" since="${5%.*}" f m
+  [ -d "$dir" ] || return 0
+  for f in "$dir"/*.jsonl; do
+    [ -e "$f" ] || continue
+    m="$(stat -c %Y "$f" 2>/dev/null)" || continue
+    { [ -z "$since" ] || [ "$m" -ge "$since" ]; } || continue
+    printf '%s\t%s\t%s\t%s\t%s\n' "$role" "$wtn" "$cwd" "$f" "$m"
+  done
+}
+
+# Optional: enumerate ALL recorded transcripts for a PROJECT over a window — the
+# history the conversation-feedback retro (docs/04) needs, not just the latest
+# pointer per live worktree that pack_chat_pointer gives. One line per session file
+# for the hub (coordinator) AND every cwd under WT_HOME, INCLUDING finished workers
+# whose worktree was deleted (their ~/.claude/projects history survives del/prune).
+# Args: <hub_dir> <wt_home_dir> <since_epoch|"">. Claude-first; packs that omit this
+# leave the scanner on its default one-pointer-per-live-location mode.
+pack_chat_history() {  # <hub_dir> <wt_home_dir> <since_epoch>
+  local hub="$1" wt_home="$2" since="${3:-}" root="$HOME/.claude/projects"
+  local slug wt_slug d name
+  if [ -n "$hub" ]; then
+    slug="$(printf '%s' "$hub" | sed 's#/#-#g')"
+    _claude_emit_transcripts coordinator - "$hub" "$root/$slug" "$since"
+  fi
+  if [ -n "$wt_home" ]; then
+    wt_slug="$(printf '%s' "$wt_home" | sed 's#/#-#g')"
+    for d in "$root/$wt_slug"-*/; do
+      [ -d "$d" ] || continue
+      name="$(basename "$d")"; name="${name#"$wt_slug"-}"
+      _claude_emit_transcripts worker "$name" "$wt_home/$name" "$d" "$since"
+    done
+  fi
+}
+
 # Worktree-relative files pack_worker_setup / pack_mcp_profile write (the core
 # ignores them when judging a worktree dirty for del/prune). fleet-mcp.json holds
 # the WORKER_MCP strict profile and may carry server credentials copied from

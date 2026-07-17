@@ -161,6 +161,9 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           #   to reprise a dead/other agent's session; not portable)
    fleet chats --scan --all --parse --json  # fleet-wide inventory of recorded
                           #   conversations + parsed method signal (feedback routine input)
+   fleet chats --scan --all --parse --history --since 2026-07-03 --json  # retro
+                          #   input: every transcript over a window, incl. deleted workers
+   fleet feedback config  # the conversation-feedback model/runner knobs (docs/04)
    fleet feedback list    # the conversation-feedback "seen ledger" (dedup state)
    fleet doctor --write-probe   # prove auto mode can actually write (witness file)
    fleet machines         # the project's machines (selected + registry pool)
@@ -264,7 +267,7 @@ agent-fleet/
 │   ├── hub-INDEX.md          index router skeleton
 │   ├── hub-AGENTS.md         hub project instructions skeleton
 │   ├── worker-settings.local.json   the claude barrier settings (reference)
-│   └── skills/               dispatch-work, doc-nav, process-agent-queue, propose-doc-change, resolve-finding
+│   └── skills/               conversation-compress, conversation-feedback, dispatch-work, doc-nav, process-agent-queue, propose-doc-change, resolve-finding
 ├── test/
 │   ├── make-sandbox.sh       throwaway sandbox project to exercise the tools
 │   ├── test-guard.sh         unit + isolated-E2E tests for the resource guard rail

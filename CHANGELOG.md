@@ -11,6 +11,33 @@ Unreleased until the first one.
 ## [Unreleased]
 
 ### Added
+- Conversation-feedback is now a 3-stage pipeline (docs/04 "The conversation-feedback
+  pipeline"): A extract (deterministic), B compress (new `conversation-compress`
+  skill — cheap model, frequent, LOCAL; one session note per transcript under
+  `$FLEET_HOME/feedback-notes/`), C distill + finalize (the `conversation-feedback`
+  skill — reasoning runs local or off-box via `FEEDBACK_RUNNER`, but dedup/filing/
+  digest always local). Splits cheap-frequent from expensive-rare and keeps private
+  transcripts on the box while only compressed notes can travel.
+- `fleet feedback config` reports the routine's model/runner knobs
+  (`FEEDBACK_MODEL_COMPRESS` / `FEEDBACK_MODEL_DISTILL` / `FEEDBACK_RUNNER`,
+  defaults in `default.env`; built-ins haiku/sonnet/local). No `bin/` script calls
+  a model — the model rides the existing `pack_launch_headless` path.
+- `fleet chats --scan --since <ISO>` drops transcripts untouched since a date, so
+  the frequent compress pass skips already-compressed ones.
+- `fleet chats --scan --history` (the retro's real stage-A input): one entry per
+  transcript file over the window, **including finished workers whose worktree was
+  deleted** (their `~/.claude` history survives `del`/`prune`). The default scan
+  returns only the latest pointer per live worktree, so a fleet that deletes
+  finished workers would expose almost none of its history — validated on a real
+  fleet where the scoped default scan saw 1 conversation and `--history` saw 45.
+  Claude-first via a new optional `pack_chat_history`; packs without it fall back to
+  the default per-location scan.
+- Lesson targets: a distilled lesson is `project` (per-project queue, unchanged),
+  `global` (fleet-wide, → digest section for the user to apply by hand), or
+  `upstream` (a generic tooling lesson for the public agent-fleet repo, → digest
+  candidates section, never auto-filed).
+- `test/test-feedback-pipeline.sh` (note dedup by session_id, `feedback config`,
+  finalize routing), wired into CI.
 - Public baseline: agent-agnostic fleet with packs for claude, gemini, opencode,
   cursor, antigravity, and copilot; coordinator/worker roles with a per-pack
   read-only-hub barrier; the proposal queue; scheduled routines; the resource

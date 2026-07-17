@@ -52,6 +52,75 @@ scans against the state of the art) and a cheaper one for the rest (a proven
 security checklist, a digest). This mirrors the general tiering: strong model for
 the orchestrator and for judgment, cheap model for mechanical work.
 
+## The conversation-feedback pipeline (stages A/B/C)
+
+The fleet retro is not one pass — it is a **3-stage pipeline**, split so the cheap
+work runs often and the expensive work runs rarely, and so the private data never
+has to leave the box. The split is what makes an off-box (cloud/ssh) distill pass
+possible at all.
+
+```
+  A extract   local, deterministic, no model   transcripts -> scan JSON
+       |        (fleet chats --scan --parse)
+       v
+  B compress  local, cheap model, FREQUENT     scan JSON  -> session notes
+       |        (skill: conversation-compress)  ($FLEET_HOME/feedback-notes/)
+       v
+  C distill   local OR ssh/cloud, strong, RARE  notes      -> candidate lessons
+       |        (skill: conversation-feedback)
+       v
+  finalize    local, ALWAYS, no model           candidates -> dedup + file + digest
+```
+
+**Why B is local.** Transcripts are local and private (the scanner is local-only).
+B is the confidentiality *and* compression boundary: it reads the private
+transcripts and emits small notes carrying only a grounded lesson — no transcript
+contents, and its `transcript` path is stripped before any payload leaves the box.
+So B must run local; only its output is shippable.
+
+**Why C can move but finalize cannot.** C's reasoning (notes -> candidate lessons)
+is pure and needs no local state, so it can run local, over ssh, or in a cloud
+routine — selected by `FEEDBACK_RUNNER`. But the seen-ledger (machine-wide dedup)
+and the queue backend's credentials stay local, so **dedup, filing, and the digest
+always run local**, from the candidates C returns. A cloud runner only ever
+reasons; it never files and never sees a credential (matches the cloud-vs-local
+rule above: cloud has no prod keys).
+
+**The contract between stages** (stable, so the runner is swappable):
+
+- A -> B: the scan JSON in **history mode** (`fleet chats --scan --all --parse
+  --history --since <ISO>`). `--history` is what makes this a retro: the default
+  scan returns only the latest pointer per live worktree, so a fleet that deletes
+  finished workers would expose almost none of its history; `--history` emits one
+  entry per transcript file over the window, finished/deleted workers included
+  (their `~/.claude` history survives `del`/`prune`). Claude-first (via the pack's
+  `pack_chat_history`); packs without it fall back to the default per-location scan.
+- B -> notes: one file per transcript at `$FLEET_HOME/feedback-notes/<session_id>.json`;
+  the file's existence is the dedup (B skips a transcript whose note exists).
+- notes -> C: the notes, transcript paths stripped. No ledger, no creds.
+- C -> candidates: `{lessons:[{fingerprint, project, pattern, evidence,
+  proposed_change, target, label}]}`, where `target` is `project` | `global` |
+  `upstream`.
+- finalize: `project` -> that project's queue (`fleet-queue`/`QUEUE_KIND`);
+  `global` -> the digest's global-lessons section; `upstream` -> the digest's
+  upstream-candidates section (never auto-filed to the public repo). Dedup via
+  `fleet feedback seen/record`; write the dated digest.
+
+**Model + runner are knobs**, reported by `fleet feedback config` and set in
+`default.env` (feedback is machine-wide): `FEEDBACK_MODEL_COMPRESS` (B, cheap),
+`FEEDBACK_MODEL_DISTILL` (C, strong), `FEEDBACK_RUNNER` (local | ssh | cloud). No
+`bin/` script calls a model — the model is passed on the existing
+`pack_launch_headless <prompt> <model>` path. Built-ins: `haiku` / `sonnet` /
+`local`.
+
+**Scheduling is two jobs, both instance-side** (not repo code): B frequent (its
+value is only realized if C is notably rarer), C rarer. Install each as a local
+job (SessionStart hook on claude/gemini, else OS cron), throttled; a human launches
+the first validation run and installs the hook (the classifier gotcha below). The
+cloud runner for C — shipping notes to a cloud agent and getting candidates back —
+is also instance-side wiring; the repo ships the contract and the local default,
+not a named cloud CLI.
+
 ## Two gotchas (learned the hard way)
 
 - A permission classifier (Claude Code's auto mode, and any CLI that vets tool
@@ -71,28 +140,24 @@ the orchestrator and for judgment, cheap model for mechanical work.
   complexity, duplication) → synthesized proposals as `type:refacto`.
 - **Feature scan** (cloud, monthly): repo direction vs the state of the art found
   by web research, sources mandatory → `type:feature`.
-- **Conversation-feedback** (local, weekly): the shipped workflow-retro routine.
-  Reads how the work actually went across **every** project and worker on the
-  machine and turns recurring method mistakes into durable fixes, not a one-off
-  report. Skill: `conversation-feedback` (in `templates/skills/`, load it from the
-  hub). Input: `fleet chats --scan --all --parse --json` — a fleet-wide inventory
-  of every pack's recorded conversation plus, for each Claude transcript, a parsed
-  method signal (user corrections, tool errors, tool histogram; claude-first,
-  other packs are inventory-only until their parser lands). Dedup: a machine-wide
-  "seen ledger" (`fleet feedback seen/record`, stored at
-  `$FLEET_HOME/feedback-seen.json`) so the same lesson is not re-filed every run —
-  a lesson's recurrence count is itself signal. Output is **hybrid**: one queue
-  proposal per new lesson against the project it came from (`type:doc-proposal`
-  for a concrete doc/skill/AGENTS.md edit, `type:workflow` for a how-we-work item,
-  via the same `propose-doc-change` backend path), **plus** a dated global digest
-  under `$FLEET_HOME/feedback-digests/<date>.md` for the whole-fleet view the
-  per-project issues cannot give. Report-only and mechanical: the skill only reads
-  transcripts, files issues, and writes the digest file — it cannot push or edit
-  the hub. Local because transcripts are local and private; schedule it as a
-  local job (SessionStart hook on claude/gemini, else OS cron), throttled, with a
-  human launching the first validation run and installing the hook (a permission
-  classifier refuses to let an agent wire up its own bypassing agent — see the
-  gotchas above). Below, the older workflow-retro framing it generalizes:
+- **Conversation-feedback** (local, weekly for distill; more frequent for
+  compress): the shipped workflow-retro routine, run as the 3-stage pipeline
+  described above (**The conversation-feedback pipeline**). It reads how the work
+  actually went across **every** project and worker on the machine and turns
+  recurring method mistakes into durable fixes, not a one-off report. Stage B
+  (`conversation-compress`) compresses each new transcript into a session note;
+  stage C (`conversation-feedback`) distills the notes into lessons, dedups them
+  against the machine-wide seen ledger (`fleet feedback seen/record`,
+  `$FLEET_HOME/feedback-seen.json` — recurrence count is itself signal), and
+  routes each: a `project` lesson to that project's queue (`type:doc-proposal` for
+  a doc/skill/AGENTS.md edit, `type:workflow` for a how-we-work item, via the
+  `propose-doc-change` backend), a `global` or `upstream` lesson to the dated
+  digest (`$FLEET_HOME/feedback-digests/<date>.md`). Report-only and mechanical:
+  the skills only read, file issues, and write the digest — never push or edit the
+  hub. Both skills load from the hub; schedule both as local jobs (SessionStart
+  hook on claude/gemini, else OS cron), throttled, a human launching the first
+  validation run and installing the hook (the classifier gotcha above). Below, the
+  older workflow-retro framing it generalizes:
 - **Workflow retro** (local, weekly): read how the work actually went (queue
   health, hub structure, skills freshness, session transcripts if local) → a
   dated report. Local because transcripts are local and private. Once the fleet

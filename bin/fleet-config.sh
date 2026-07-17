@@ -55,6 +55,19 @@ FLEET_DEF_MIN_FREE_DISK_MB=5120 # free disk floor on WT_HOME's filesystem, MB
 # guard floors). See docs/07-machine-and-solo.md.
 FLEET_DEF_WORKER_NODE_MAX_MB=0  # V8 old-space cap per node worker, MB (0 = off)
 
+# conversation-feedback routine (docs/04) — model + runner knobs. The routine is a
+# 3-stage pipeline: A extract (deterministic, no model), B compress (small model,
+# frequent, LOCAL — transcripts are private), C distill (strong model, rarer,
+# LOCAL or elsewhere). No bin/ script calls a model: these values are passed to the
+# existing pack_launch_headless <prompt> <model> path (or read by the skill to pick
+# its runner). Machine-wide, overridable in default.env (FEEDBACK_MODEL_COMPRESS /
+# FEEDBACK_MODEL_DISTILL / FEEDBACK_RUNNER). Reported by `fleet feedback config`.
+# Empty compress/distill = let the CLI pick its own default model (no --model
+# flag). See docs/04-routines.md.
+FLEET_DEF_FEEDBACK_MODEL_COMPRESS=haiku  # stage B: cheap, frequent (empty = CLI default)
+FLEET_DEF_FEEDBACK_MODEL_DISTILL=sonnet  # stage C: strong, rarer  (empty = CLI default)
+FLEET_DEF_FEEDBACK_RUNNER=local          # where stage C runs: local | ssh | cloud
+
 _fleet_list() {
   echo "known projects (--project <name>):" >&2
   if [ -d "$FLEET_PROJECTS" ]; then
