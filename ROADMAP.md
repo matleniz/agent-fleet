@@ -30,8 +30,8 @@ the generic CLI-agnostic mount-namespace loader for cursor/copilot/antigravity
 
 ## Resource management (anti-crash)  [mostly shipped]
 
-Context: on a small box (WSL2, ~8 GiB RAM) the fleet can freeze the host. Root
-cause is **memory, not disk**.
+Context: on a memory-constrained host (e.g. WSL2 with a low RAM ceiling) the
+fleet can freeze the machine. Root cause is **memory, not disk**.
 
 Status: **B, C (repo side), D are implemented** (heap-cap knob, small-box preset
 docs, teardown reaper). **A** is a manual host change (outside the repo) and **E**
@@ -68,8 +68,8 @@ The freeze is a memory chain, compounded by a launch-time-only guard:
 
 Not causes (verified clean): temp cleanup (traps + `rm`, `fleet:440/671`), mount
 namespaces in antigravity/copilot packs (per-process `unshare`, 0 leaked), logs
-(`events.log` 704 B). Disk is secondary: 64 GB VHD at 59%, worktrees accumulate
-(`di-wt` 2.1 G etc.), `fleet prune` exists but is manual.
+(`events.log` stays tiny). Disk is secondary: the VHD/volume has ample headroom;
+worktrees accumulate (a few GB each), `fleet prune` exists but is manual.
 
 ## Items (by leverage)
 
@@ -112,7 +112,7 @@ host down. A node hitting the cap self-terminates.
 - Docs to update in the same pass (repo rule: docs = done): `docs/02` (barrier /
   launch posture), `README.md` config table, `templates/` project .env comment.
 
-### C — tune the guard for this box  [IN REPO / config] — DONE (repo side)
+### C — tune the guard for a memory-constrained host  [IN REPO / config] — DONE (repo side)
 Repo side shipped: the small-box preset (`MACHINE_MAX_WORKERS=2`,
 `MACHINE_MIN_FREE_MB=3072`, `WORKER_NODE_MAX_MB=2048`) is documented in docs/07.
 Still per-box: create your own `~/.config/fleet/machines/local.env` (instance
@@ -147,6 +147,6 @@ launch each worker in a cgroup with `memory.max`) and kill/alert before OOM,
 instead of only gating at spawn. Needs design. Lowest priority; A+B+C+D cover
 the crash.
 
-## Suggested order tomorrow
+## Suggested order
 A (manual, unblocks the machine) → B (claude pack + config knob) → C (local.env)
 → D (reaper) → E (design only).

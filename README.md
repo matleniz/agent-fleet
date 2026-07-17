@@ -50,6 +50,15 @@ fresh machine in under an hour.
 - **Routines**: scheduled read-only reviews (security, refactor, feature, retro)
   that file findings into the queue.
 
+The barrier is enforced per pack, mechanically, not by prompt. For the hook/rule
+packs (claude, gemini, opencode, cursor) it blocks the standard edit tools; a
+shell redirect can still reach the hub, so the guarantee there is "the edit paths
+are blocked and the rule is explicit", not "write-proof". The mount-namespace
+packs (antigravity, copilot) are write-proof: the hub is bind-mounted read-only,
+shell included, which is why the always-on VM uses that hardening. Full detail
+and the residual hole are in
+[docs/02](docs/02-roles-and-barrier.md#the-barrier-read-this-it-is-subtle).
+
 ## Why it saves tokens
 
 Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
@@ -284,6 +293,15 @@ live on a persistent volume. One-time setup and daily use are in
 worker there (the VM is a machine in the project's `MACHINES`, or a legacy
 `REMOTE_HOST`). Several containers can share one host via `FLEET_CONTAINER` /
 `FLEET_TMUX` in `deploy/.env`.
+
+## Project status
+
+Pre-1.0 and single-maintainer. It works and is used daily, but the surface is not
+frozen: subcommand names, config keys, and the pack contract can change between
+versions without a deprecation cycle. Changes are recorded in
+[CHANGELOG.md](CHANGELOG.md). Issues and PRs are welcome. The one hard rule for a
+change is that `bin/` and the docs move in the same commit (see
+[AGENTS.md](AGENTS.md)); CI enforces the command-coverage part of that.
 
 ## License
 

@@ -21,7 +21,8 @@ instead: ntfy notifications (claude pack hooks + `bin/fleet-notify`) and
 
 - **tmux agent dashboard** — a TUI over all tmux panes showing each agent's
   state (idle / processing / awaiting approval) with one-key approve. Supports
-  Claude Code, opencode, Codex, Gemini — nearly our roster. Try on the VM tmux.
+  Claude Code, opencode, Codex, Gemini — nearly the full pack roster. Worth
+  trying under a fleet tmux session.
   https://github.com/nyanko3141592/tmuxcc (alt: hiroppy/tmux-agent-sidebar)
 - **Claude Code statusline per worker** — script the statusline (worker name,
   branch, remaining context, plan usage) + `/color` per session to tell panes
@@ -83,12 +84,12 @@ instead: ntfy notifications (claude pack hooks + `bin/fleet-notify`) and
   (Tailscale). Overlaps with ntfy for less effort today.
   https://github.com/bjornjee/agent-dashboard
 - **srt (Anthropic sandbox-runtime)** — OS-level confinement (bubblewrap +
-  network allowlist) for running NON-claude CLIs in bypass mode on the laptop
+  network allowlist) for running NON-claude CLIs in bypass mode on the host
   without container weight. Known /proc escape (2026-04) → defense in depth,
   not a boundary. https://github.com/anthropic-experimental/sandbox-runtime
 - **Container-per-worker (Docker Sandboxes / sbx)** — YOLO-inside-a-sandbox
-  per agent, 9 CLIs supported. Our VM already isolates at container level;
-  reconsider if workers ever run untrusted code locally.
+  per agent, 9 CLIs supported. The `deploy/` image already isolates at container
+  level; reconsider if workers ever run untrusted code locally.
   https://www.innoq.com/en/blog/2026/07/trust-but-sandbox/
 - **Queue as MCP server** — expose the proposal queue through one MCP so all
   five CLIs pull/update tasks the same way (vibe-kanban proves the shape).
