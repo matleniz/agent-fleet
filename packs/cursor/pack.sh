@@ -1,5 +1,6 @@
+# shellcheck shell=bash
 # cursor pack — Cursor CLI (`agent`, install: curl https://cursor.com/install | bash).
-# Sourced by fleet_load_pack; must define the five required pack_* functions
+# Sourced by fleet_load_pack; must define the six required pack_* functions
 # (pack_doctor is optional, used by `fleet doctor`).
 # Verified against agent 2026.07.09 (docs + empirical checks).
 
@@ -90,6 +91,7 @@ pack_install() { echo "curl -fsS https://cursor.com/install | bash"; }
 # Optional: fleet doctor status line.
 pack_doctor() {
   command -v agent >/dev/null || { echo "NOT INSTALLED (curl -fsS https://cursor.com/install | bash)"; return; }
+  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
   local v s; v="$(agent --version 2>/dev/null | head -1)"
   s="$(timeout 10 agent status 2>/dev/null | head -1 || true)"
   echo "installed ($v) — ${s:-status unavailable}"

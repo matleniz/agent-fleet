@@ -1,5 +1,6 @@
+# shellcheck shell=bash
 # gemini pack — Gemini CLI (@google/gemini-cli).
-# Sourced by fleet_load_pack; must define the five required pack_* functions
+# Sourced by fleet_load_pack; must define the six required pack_* functions
 # (pack_doctor is optional, used by `fleet doctor`).
 # Verified against gemini-cli 0.50.0 (bundled docs + empirical checks).
 
@@ -91,6 +92,7 @@ pack_install() { echo "npm install -g @google/gemini-cli"; }
 # Optional: fleet doctor status line.
 pack_doctor() {
   command -v gemini >/dev/null || { echo "NOT INSTALLED (npm i -g @google/gemini-cli)"; return; }
+  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
   local v auth="NO AUTH (set GEMINI_API_KEY in ~/.gemini/.env; OAuth for individuals was retired)"
   v="$(gemini --version 2>/dev/null | head -1)"
   { [ -n "${GEMINI_API_KEY:-}" ] || grep -q GEMINI_API_KEY "$HOME/.gemini/.env" 2>/dev/null; } && auth="API key configured"

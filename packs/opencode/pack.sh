@@ -1,5 +1,6 @@
+# shellcheck shell=bash
 # opencode pack — opencode (sst/opencode, npm opencode-ai).
-# Sourced by fleet_load_pack; must define the five required pack_* functions
+# Sourced by fleet_load_pack; must define the six required pack_* functions
 # (pack_doctor is optional, used by `fleet doctor`).
 # Verified against opencode 1.17.18 (config schema + empirical checks).
 #
@@ -122,6 +123,7 @@ pack_install() { echo "npm install -g opencode-ai"; }
 # Optional: fleet doctor status line.
 pack_doctor() {
   command -v opencode >/dev/null || { echo "NOT INSTALLED (npm i -g opencode-ai)"; return; }
+  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
   local v n; v="$(opencode --version 2>/dev/null | head -1)"
   n="$(python3 -c 'import json;print(len(json.load(open("'"$HOME"'/.local/share/opencode/auth.json"))))' 2>/dev/null || echo 0)"
   echo "installed ($v) — $n provider credential(s); free gateway models need none"

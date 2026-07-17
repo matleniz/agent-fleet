@@ -125,6 +125,24 @@ fleet_load_pack() {
   done
 }
 
+# Shared write-probe (fleet doctor --write-probe), called from each pack's
+# `pack_doctor probe`. Launches the pack HEADLESS in the CURRENT (throwaway) dir
+# asking it to write a witness file, then reports PASS/FAIL. Reuses the pack's
+# real pack_launch_headless (via a subshell so its exec is contained and control
+# returns), so the probe exercises the exact launch `fleet dispatch` uses — the
+# whole point is to catch a box that ACCEPTS a launch but writes nothing (org
+# disables bypass; a userns-less mount-ns pack fails closed; a broken login).
+# Run AFTER fleet_load_pack (pack_launch_headless must be in scope).
+fleet_write_probe() {
+  rm -f .fleet-witness
+  ( pack_launch_headless 'Create a file named .fleet-witness containing the text OK in the current directory, then stop. Do nothing else.' ) >/dev/null 2>&1 || true
+  if [ -f .fleet-witness ]; then
+    echo "write-probe: PASS (headless mode can write here)"
+  else
+    echo "write-probe: FAIL (headless wrote nothing — check managed permissions / login / userns)"
+  fi
+}
+
 # Defaults + exports read by the packs' pack_worker_setup (called by both
 # new-worker and fleet's refresh path, after fleet_resolve_conf).
 fleet_export_worker_env() {

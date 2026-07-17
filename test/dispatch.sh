@@ -40,7 +40,7 @@ for c in "${CASES[@]}"; do
   case "$pack" in
     antigravity|copilot)
       ( HUB=""; source "$ENGINE/packs/$pack/pack.sh"
-        if [ "$pack" = antigravity ]; then _agy_userns_ro_ok; else _cop_userns_ro_ok; fi ) \
+        _fleet_userns_ro_ok ) \
         || { echo "  $pack: SKIP (no unprivileged userns)"; continue; }
       ;;
   esac

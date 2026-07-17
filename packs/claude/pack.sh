@@ -1,5 +1,6 @@
+# shellcheck shell=bash
 # claude pack — Claude Code CLI (@anthropic-ai/claude-code).
-# Sourced by fleet_load_pack; must define the five required pack_* functions
+# Sourced by fleet_load_pack; must define the six required pack_* functions
 # (pack_doctor is optional, used by `fleet doctor`).
 # Iso-functional port of the pre-pack behavior: same launch flags, same
 # session detection, same barrier settings written per worktree.
@@ -49,7 +50,7 @@ pack_launch_headless() {
 # uses). Idempotent; prepends the import if the file already has other content so
 # nothing is lost. mode=status only reports. Echoes a status word.
 pack_global_setup() {
-  local canon="$1" mode="${2:-install}" f="$HOME/.claude/CLAUDE.md" imp="@$1"
+  local mode="${2:-install}" f="$HOME/.claude/CLAUDE.md" imp="@$1"
   command -v claude >/dev/null || { echo "skipped:not-installed"; return 0; }
   if [ -f "$f" ] && grep -qxF "$imp" "$f"; then echo "wired"; return 0; fi
   [ "$mode" = status ] && { echo "not-wired"; return 0; }
@@ -106,19 +107,13 @@ PY
 pack_install() { echo "npm install -g @anthropic-ai/claude-code"; }
 
 # Optional: fleet doctor status line. With arg "probe" (fleet doctor --write-probe)
-# it runs a real witness write in the CURRENT (throwaway) dir to prove auto mode
-# can actually write here — the org's managed remote-settings.json can silently
-# deny every write, and a plain launch fails open (rc=0, nothing written).
+# it runs a real witness write in the CURRENT (throwaway) dir via the shared
+# fleet_write_probe, proving auto mode can actually write here — the org's
+# managed remote-settings.json can silently deny every write, and a plain launch
+# fails open (rc=0, nothing written).
 pack_doctor() {
   command -v claude >/dev/null || { echo "NOT INSTALLED (npm i -g @anthropic-ai/claude-code)"; return; }
-  if [ "${1:-}" = probe ]; then
-    rm -f .fleet-witness
-    claude -p 'Create a file named .fleet-witness containing the text OK in the current directory, then stop. Do nothing else.' \
-      --permission-mode auto >/dev/null 2>&1 || true
-    if [ -f .fleet-witness ]; then echo "write-probe: PASS (auto mode can write here)"
-    else echo "write-probe: FAIL (auto mode wrote nothing — check managed permissions / login)"; fi
-    return
-  fi
+  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
   local v; v="$(claude --version 2>/dev/null | head -1)"
   local auth="no login found"
   [ -f "$HOME/.claude/.credentials.json" ] && auth="logged in (OAuth)"

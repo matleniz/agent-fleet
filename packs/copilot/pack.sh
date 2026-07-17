@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # copilot pack — GitHub Copilot CLI (@github/copilot).
 # Sourced by fleet_load_pack; must define the six required pack_* functions
 # (pack_doctor is optional, used by `fleet doctor`).
@@ -12,47 +13,14 @@
 # (.github/copilot/settings.local.json) are deferred/untrusted and DO NOT fire
 # in headless mode. So this pack cannot make the hub read-only *from inside the
 # CLI* the way claude/cursor/opencode/gemini do. Instead the barrier is enforced
-# by the OS (same mechanism as the antigravity pack): pack_launch runs copilot
-# inside an unprivileged mount namespace where $HUB is bind-mounted read-only
-# (kernel deny). This is STRONGER than the per-path packs — it also blocks the
-# shell-redirect hole (see docs/02) — but only exists at launch, so drive the
-# worker via `fleet w`, not a bare `copilot` in the worktree. --add-dir "$HUB"
-# lets the worker READ the hub (Copilot restricts file access to the cwd by
-# default); the ro mount is what stops writes to it. Projects WITHOUT a hub skip
-# the jail entirely. Requires unprivileged user namespaces; pack_worker_setup
-# probes for them and fails closed if absent.
-
-# Run "$@" confined so $HUB is read-only, enforced by the kernel via a bind mount
-# remounted read-only inside a private mount namespace. Fails CLOSED: if the
-# namespace or the ro remount cannot be set up, the command does NOT run (never
-# exec copilot unconfined on a hub project). No hub -> run "$@" as-is.
-# --map-root-user grants CAP_SYS_ADMIN for mount inside the userns; files copilot
-# creates still map back to the real user outside. cwd (the worktree) carries
-# through unshare, so copilot launches in the worktree.
-_cop_hub_ro_exec() {
-  [ -n "${HUB:-}" ] || exec "$@"
-  exec unshare --user --map-root-user --mount -- bash -c '
-    hub=$1; shift
-    mount --bind "$hub" "$hub" && mount -o remount,bind,ro "$hub" || {
-      echo "copilot: could not establish the read-only hub barrier —" >&2
-      echo "  refusing to launch (fail closed)." >&2
-      exit 97
-    }
-    exec "$@"
-  ' _ "$HUB" "$@"
-}
-
-# True iff we can create a userns AND remount a bind read-only inside it (i.e.
-# the launch-time barrier will actually hold). Probes on a throwaway dir.
-_cop_userns_ro_ok() {
-  local t rc; t="$(mktemp -d)" || return 1
-  unshare --user --map-root-user --mount -- bash -c '
-    mount --bind "$1" "$1" 2>/dev/null && mount -o remount,bind,ro "$1" 2>/dev/null \
-      && ! (echo x >"$1/probe") 2>/dev/null
-  ' _ "$t" 2>/dev/null; rc=$?
-  rm -rf "$t" 2>/dev/null
-  return $rc
-}
+# by the OS — the shared mount-namespace jail in packs/hub-mount-ns.sh
+# (_fleet_hub_ro_exec / _fleet_userns_ro_ok), same mechanism as the antigravity
+# pack: $HUB is bind-mounted read-only at launch. Drive the worker via `fleet w`,
+# not a bare `copilot`. --add-dir "$HUB" lets the worker READ the hub (Copilot
+# restricts file access to the cwd by default); the ro mount is what stops writes
+# to it. Projects WITHOUT a hub skip the jail entirely.
+# shellcheck source=packs/hub-mount-ns.sh disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/../hub-mount-ns.sh"
 
 # Most-recent Copilot session id whose cwd is $1, else empty. Copilot stores each
 # session under ~/.copilot/session-state/<id>/workspace.yaml with a `cwd:` line;
@@ -95,9 +63,9 @@ pack_launch() {
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
   if [ "${1:-}" = "--resume" ]; then
     local sid; sid="$(_cop_session_for "$PWD")"
-    [ -n "$sid" ] && _cop_hub_ro_exec copilot --allow-all-tools "${adddir[@]}" --resume="$sid"
+    [ -n "$sid" ] && _fleet_hub_ro_exec copilot --allow-all-tools "${adddir[@]}" --resume="$sid"
   fi
-  _cop_hub_ro_exec copilot --allow-all-tools "${adddir[@]}"
+  _fleet_hub_ro_exec copilot --allow-all-tools "${adddir[@]}"
 }
 
 # Headless launch for `fleet dispatch`: one task non-interactively, through the
@@ -105,11 +73,11 @@ pack_launch() {
 pack_launch_headless() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
-  _cop_hub_ro_exec copilot -p "$1" --allow-all-tools "${adddir[@]}"
+  _fleet_hub_ro_exec copilot -p "$1" --allow-all-tools "${adddir[@]}"
 }
 
 # pack_worker_setup writes nothing: the barrier is a launch-time mount namespace
-# (see _cop_hub_ro_exec), not a file in the worktree.
+# (see _fleet_hub_ro_exec), not a file in the worktree.
 pack_barrier_files() { :; }
 
 # The read-only-hub barrier is enforced at launch (kernel bind mount), so setup
@@ -119,9 +87,8 @@ pack_barrier_files() { :; }
 # (No hub -> nothing to enforce.) Copilot reads the worktree's AGENTS.md natively
 # as custom instructions, so no context file is written here.
 pack_worker_setup() {
-  local dest="$1"
-  [ -n "${HUB:-}" ] || return 0
-  _cop_userns_ro_ok && return 0
+  [ -n "${HUB:-}" ] || return 0   # $1 (dest) unused: barrier is launch-time, nothing written
+  _fleet_userns_ro_ok && return 0
   echo "error: the copilot pack enforces its read-only hub barrier with an" >&2
   echo "  unprivileged mount namespace, but user namespaces are unavailable" >&2
   echo "  here. Enable unprivileged userns, use it on hub-less projects, or" >&2
@@ -148,10 +115,11 @@ pack_install() { echo "npm install -g @github/copilot"; }
 # `fleet dispatch` reliable. No env token -> point at both auth paths.
 pack_doctor() {
   command -v copilot >/dev/null || { echo "NOT INSTALLED (npm i -g @github/copilot)"; return; }
+  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
   local v auth="no env token (copilot login for interactive; COPILOT_GITHUB_TOKEN for headless)"
   v="$(copilot --version 2>/dev/null | head -1 | sed 's/^GitHub Copilot CLI //; s/\.$//')"
   { [ -n "${COPILOT_GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; } && auth="token in env"
   local jail="hub barrier: OS mount namespace"
-  _cop_userns_ro_ok || jail="hub barrier: UNAVAILABLE (no unprivileged userns — hub-less projects only)"
+  _fleet_userns_ro_ok || jail="hub barrier: UNAVAILABLE (no unprivileged userns — hub-less projects only)"
   echo "installed ($v) — $auth — $jail"
 }
