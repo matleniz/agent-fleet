@@ -257,8 +257,7 @@ agent-fleet/
 │   ├── dispatch.sh           headless dispatch: per-pack flags, tmux worker, remote, write-probe
 │   ├── global.sh             fleet global wiring across the packs
 │   ├── barrier-cursor.sh     cursor read-only-hub barrier (structural + opt-in live)
-│   ├── barrier-antigravity.sh  antigravity mount-namespace barrier E2E
-│   └── barrier-copilot.sh    copilot mount-namespace barrier E2E
+│   └── barrier-mount-ns.sh   mount-namespace barrier E2E (arg: antigravity | copilot)
 └── deploy/                  run the fleet on an always-on VM (Docker), see deploy/README.md
 ```
 

@@ -116,6 +116,22 @@ echo "[3] --budget exit codes"
 ctx --budget 100000 >/dev/null 2>&1; eq "under budget -> exit 0" "$?" "0"
 ctx --budget 1      >/dev/null 2>&1; eq "over budget -> exit 2"  "$?" "2"
 
+echo "[4] dispatch preamble stays in sync (bin/fleet <-> fleet-context.py)"
+# The framing string is hand-duplicated in cmd_dispatch_run (bin/fleet) and
+# dispatch_preamble (fleet-context.py). No shared source across bash/python, so
+# this guards against silent drift: each invariant fragment must be in BOTH.
+while IFS= read -r frag; do
+  [ -n "$frag" ] || continue
+  grep -qF "$frag" "$REPO/bin/fleet"             || bad "preamble fragment missing from bin/fleet: $frag"
+  grep -qF "$frag" "$REPO/bin/fleet-context.py"  || bad "preamble fragment missing from fleet-context.py: $frag"
+done <<'FRAGS'
+You are a code WORKER in the git worktree
+is READ-ONLY: do not edit it; if a hub doc
+needs changing, note it for the coordinator (do not write there).
+Do the task, run the tests, commit on this branch. Task follows.
+FRAGS
+ok "dispatch preamble fragments present in both bin/fleet and fleet-context.py"
+
 echo
 echo "context tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

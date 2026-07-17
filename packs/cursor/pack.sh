@@ -97,8 +97,7 @@ pack_install() { echo "curl -fsS https://cursor.com/install | bash"; }
 
 # Optional: fleet doctor status line.
 pack_doctor() {
-  command -v agent >/dev/null || { echo "NOT INSTALLED (curl -fsS https://cursor.com/install | bash)"; return; }
-  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
+  fleet_doctor_preamble agent "curl -fsS https://cursor.com/install | bash" "${1:-}" || return
   local v s; v="$(agent --version 2>/dev/null | head -1)"
   s="$(timeout 10 agent status 2>/dev/null | head -1 || true)"
   echo "installed ($v) — ${s:-status unavailable}"

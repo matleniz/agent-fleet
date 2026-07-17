@@ -93,8 +93,7 @@ pack_install() { echo "npm install -g @google/gemini-cli"; }
 
 # Optional: fleet doctor status line.
 pack_doctor() {
-  command -v gemini >/dev/null || { echo "NOT INSTALLED (npm i -g @google/gemini-cli)"; return; }
-  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
+  fleet_doctor_preamble gemini "npm i -g @google/gemini-cli" "${1:-}" || return
   local v auth="NO AUTH (set GEMINI_API_KEY in ~/.gemini/.env; OAuth for individuals was retired)"
   v="$(gemini --version 2>/dev/null | head -1)"
   { [ -n "${GEMINI_API_KEY:-}" ] || grep -q GEMINI_API_KEY "$HOME/.gemini/.env" 2>/dev/null; } && auth="API key configured"

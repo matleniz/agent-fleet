@@ -123,8 +123,7 @@ pack_install() { echo "npm install -g @anthropic-ai/claude-code"; }
 # managed remote-settings.json can silently deny every write, and a plain launch
 # fails open (rc=0, nothing written).
 pack_doctor() {
-  command -v claude >/dev/null || { echo "NOT INSTALLED (npm i -g @anthropic-ai/claude-code)"; return; }
-  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
+  fleet_doctor_preamble claude "npm i -g @anthropic-ai/claude-code" "${1:-}" || return
   local v; v="$(claude --version 2>/dev/null | head -1)"
   local auth="no login found"
   [ -f "$HOME/.claude/.credentials.json" ] && auth="logged in (OAuth)"

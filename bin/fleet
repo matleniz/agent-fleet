@@ -566,7 +566,10 @@ cmd_add_agent() {
   else
     local new_agents; new_agents="$(fleet_agents) $pack"
     if grep -q '^AGENTS=' "$CONF"; then
-      sed -i "s|^AGENTS=.*|AGENTS=\"$new_agents\"|" "$CONF"
+      # Escape sed replacement metachars (\ & and the | delimiter) so a pack name
+      # with such a char can't corrupt the substitution.
+      local esc="${new_agents//\\/\\\\}"; esc="${esc//&/\\&}"; esc="${esc//|/\\|}"
+      sed -i "s|^AGENTS=.*|AGENTS=\"$esc\"|" "$CONF"
     else
       printf 'AGENTS="%s"\n' "$new_agents" >> "$CONF"
     fi

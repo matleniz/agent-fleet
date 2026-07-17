@@ -133,8 +133,7 @@ pack_install() { echo "npm install -g @github/copilot"; }
 # report the fleet-relevant signal instead: an env token is what makes headless
 # `fleet dispatch` reliable. No env token -> point at both auth paths.
 pack_doctor() {
-  command -v copilot >/dev/null || { echo "NOT INSTALLED (npm i -g @github/copilot)"; return; }
-  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
+  fleet_doctor_preamble copilot "npm i -g @github/copilot" "${1:-}" || return
   local v auth="no env token (copilot login for interactive; COPILOT_GITHUB_TOKEN for headless)"
   v="$(copilot --version 2>/dev/null | head -1 | sed 's/^GitHub Copilot CLI //; s/\.$//')"
   { [ -n "${COPILOT_GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; } && auth="token in env"

@@ -130,8 +130,7 @@ pack_install() { echo "curl -fsSL https://antigravity.google/cli/install.sh | ba
 
 # Optional: fleet doctor status line.
 pack_doctor() {
-  command -v agy >/dev/null || { echo "NOT INSTALLED (curl -fsSL https://antigravity.google/cli/install.sh | bash)"; return; }
-  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
+  fleet_doctor_preamble agy "curl -fsSL https://antigravity.google/cli/install.sh | bash" "${1:-}" || return
   local auth="no login found"
   [ -e "$HOME/.gemini/antigravity-cli/antigravity-oauth-token" ] && auth="logged in (Google OAuth)"
   local jail="hub barrier: OS mount namespace"

@@ -123,8 +123,7 @@ pack_install() { echo "npm install -g opencode-ai"; }
 
 # Optional: fleet doctor status line.
 pack_doctor() {
-  command -v opencode >/dev/null || { echo "NOT INSTALLED (npm i -g opencode-ai)"; return; }
-  [ "${1:-}" = probe ] && { fleet_write_probe; return; }
+  fleet_doctor_preamble opencode "npm i -g opencode-ai" "${1:-}" || return
   local v n; v="$(opencode --version 2>/dev/null | head -1)"
   n="$(python3 -c 'import json;print(len(json.load(open("'"$HOME"'/.local/share/opencode/auth.json"))))' 2>/dev/null || echo 0)"
   echo "installed ($v) — $n provider credential(s); free gateway models need none"

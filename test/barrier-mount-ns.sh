@@ -1,32 +1,35 @@
 #!/usr/bin/env bash
-# barrier-copilot.sh — prove the copilot pack's read-only-hub barrier.
+# barrier-mount-ns.sh <pack> — prove a mount-namespace pack's read-only-hub barrier.
 #
-# Like antigravity (and unlike the per-path packs claude/cursor/opencode/gemini),
-# the GitHub Copilot CLI has no in-CLI per-path write-deny: its `write` tool kind
-# matches all writes with no path argument, its path grants are binary (read+write
-# or nothing), and its repo-level hooks do not fire in headless mode. So the
-# barrier is an OS mount namespace applied at launch by _fleet_hub_ro_exec (see
-# packs/copilot/pack.sh), where $HUB is bind-mounted read-only. This test
-# exercises that mechanism directly — no copilot auth/network needed — and asserts
-# a hub write is DENIED (including via a shell redirect, the residual hole the
-# per-path packs cannot close), a hub read is allowed, and a worktree write is
-# allowed. Exits non-zero on any failure.
+# antigravity and copilot have no in-CLI per-path write-deny (agy has no deny
+# mechanism; Copilot's `write` grant is binary and its repo hooks don't fire
+# headless), so their barrier is an OS mount namespace applied at launch by
+# _fleet_hub_ro_exec (packs/hub-mount-ns.sh), where $HUB is bind-mounted read-only.
+# This exercises that mechanism directly — no CLI auth/network — and asserts a hub
+# write is DENIED (including via a shell redirect, the residual hole the per-path
+# packs cannot close), a hub read is allowed, a worktree write is allowed, and the
+# COORDINATOR (cwd == hub) runs unconfined. Exits non-zero on any failure.
 #
 # Skips (exit 0) if unprivileged user namespaces are unavailable, matching the
-# pack's fail-closed behavior: where the barrier cannot hold, the pack refuses
-# the project rather than running unconfined.
+# pack's fail-closed behavior: where the barrier cannot hold, the pack refuses the
+# project rather than running unconfined.
+#
+#   test/barrier-mount-ns.sh antigravity
+#   test/barrier-mount-ns.sh copilot
 set -euo pipefail
 
+pack="${1:?usage: barrier-mount-ns.sh <pack>  (antigravity|copilot)}"
 SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-PACK="$SELF_DIR/../packs/copilot/pack.sh"
+PACK="$SELF_DIR/../packs/$pack/pack.sh"
+[ -f "$PACK" ] || { echo "FAIL: no pack '$pack' ($PACK)" >&2; exit 1; }
 
-fail() { echo "FAIL: $*" >&2; exit 1; }
+fail() { echo "FAIL [$pack]: $*" >&2; exit 1; }
 
-# Load the pack's functions (does not launch copilot).
+# Load the pack's functions (does not launch the CLI).
 HUB=""; source "$PACK"
 
 if ! _fleet_userns_ro_ok; then
-  echo "SKIP: no unprivileged user namespaces here (pack fails closed on hub projects)"
+  echo "SKIP [$pack]: no unprivileged user namespaces here (pack fails closed on hub projects)"
   exit 0
 fi
 
@@ -56,4 +59,4 @@ got="$( ( _fleet_hub_ro_exec bash -c 'cat "$0/DOC.md"' "$hub" ) 2>/dev/null )" \
   || fail "coordinator (cwd=hub) write failed — jailed when it should not be"
 [ -f "$hub/coord-wrote" ] || fail "coordinator write not persisted"
 
-echo "PASS: worker hub write denied (incl. shell redirect), hub read OK, worktree write OK, coordinator (cwd=hub) write OK"
+echo "PASS [$pack]: worker hub write denied (incl. shell redirect), hub read OK, worktree write OK, coordinator (cwd=hub) write OK"

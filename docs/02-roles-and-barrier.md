@@ -200,8 +200,8 @@ if not (no userns → refuse the project; use it hub-less or drop it from
 read from the launch cwd: a **worker** (cwd = a worktree, hub external) is
 jailed, but the **coordinator** (launched *in* the hub, cwd = the hub) runs
 unconfined so it can write the hub it owns. So agy/copilot work as coordinators
-too, not only as workers. E2E: `test/barrier-antigravity.sh` (worker hub write
-denied, hub read OK, worktree write OK, coordinator cwd=hub write OK).
+too, not only as workers. E2E: `test/barrier-mount-ns.sh antigravity` (worker hub
+write denied, hub read OK, worktree write OK, coordinator cwd=hub write OK).
 
 **GitHub Copilot CLI** (`packs/copilot`): same story as antigravity, for the same
 reason. Its `write` tool kind matches *all* writes with no path argument (verified
@@ -216,7 +216,7 @@ unprivileged mount namespace with `$HUB` bind-mounted read-only, and `--add-dir
 cwd by default) while the ro mount stops writes. `pack_worker_setup` fails closed
 without userns, same as antigravity. Same role rule as antigravity: only a worker
 (cwd = worktree) is jailed; a coordinator launched in the hub runs unconfined and
-can write it. E2E: `test/barrier-copilot.sh`, plus a live proof — a jailed
+can write it. E2E: `test/barrier-mount-ns.sh copilot`, plus a live proof — a jailed
 `copilot -p` asked to overwrite a hub file reported `EROFS` and left it unchanged.
 
 Residual hole in the hook/rule-based packs (claude/cursor/opencode/gemini):

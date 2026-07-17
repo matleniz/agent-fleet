@@ -153,6 +153,17 @@ fleet_write_probe() {
   fi
 }
 
+# Shared pack_doctor preamble: the two checks every pack repeats before its own
+# status line. Returns 1 (the caller should `return`) when it already printed the
+# answer — the CLI is not installed, or this is a `fleet doctor --write-probe`
+# run; returns 0 to continue. Call as:
+#   fleet_doctor_preamble <cli> <install-hint> "${1:-}" || return
+fleet_doctor_preamble() {  # <cli-cmd> <install-hint> [doctor-arg]
+  command -v "$1" >/dev/null || { echo "NOT INSTALLED ($2)"; return 1; }
+  [ "${3:-}" = probe ] && { fleet_write_probe; return 1; }
+  return 0
+}
+
 # Per-worker V8 heap cap, applied at launch by the NODE packs (claude/gemini/
 # opencode/copilot) — call from pack_launch / pack_launch_headless before exec.
 # Reads WORKER_NODE_MAX_MB (project/global .env, re-sourced in the launch window)

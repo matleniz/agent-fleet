@@ -43,9 +43,13 @@ jobs:
         run: |
           set -euo pipefail
           for t in test/test-context.sh test/test-guard.sh test/global.sh \
-                   test/dispatch.sh test/barrier-cursor.sh \
-                   test/barrier-antigravity.sh test/barrier-copilot.sh; do
+                   test/dispatch.sh test/barrier-cursor.sh; do
             echo "::group::$t"
             bash "$t"
+            echo "::endgroup::"
+          done
+          for p in antigravity copilot; do
+            echo "::group::barrier-mount-ns $p"
+            bash test/barrier-mount-ns.sh "$p"
             echo "::endgroup::"
           done
