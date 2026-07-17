@@ -44,18 +44,20 @@ instead: ntfy notifications (claude pack hooks + `bin/fleet-notify`) and
   in the worktree when switching agents. Cheap to standardize in the worker
   skills. https://wal.sh/research/2026-q2-cli-coding-agents/
 
-- **Lean worker MCP profile** — SHIPPED. `WORKER_MCP` allowlist in a project
-  `.env`, applied per worktree via the optional `pack_mcp_profile` (wired by
-  `fleet_setup_worktree`, so it survives a refresh). Done: **gemini** (full —
-  `mcp.allowed` gates every scope) and **opencode** (full — no allowlist key, so
-  it disables the non-allowed servers it enumerates from the global config;
-  verified live). **claude** partial — `enabledMcpjsonServers` gates the project
-  `.mcp.json`, NOT user-scope `~/.claude.json`; full isolation needs
-  `--strict-mcp-config` + a generated config from `~/.claude.json` (deferred, the
-  one remaining sub-item). Confirmed NOT possible (verified empirically):
-  **cursor** and **copilot** — their project MCP config only adds to / overrides
-  the user-scope servers, cannot suppress them, and their disable is global not
-  per-worktree; **antigravity** has no per-workspace MCP config. See docs/06.
+- **Lean worker MCP profile** — SHIPPED (full, 3/3 capable CLIs). `WORKER_MCP`
+  allowlist in a project `.env`, applied per worktree via the optional
+  `pack_mcp_profile` (wired by `fleet_setup_worktree`, so it survives a refresh).
+  Done: **gemini** (full — `mcp.allowed` gates every scope), **opencode** (full —
+  no allowlist key, so it disables the non-allowed servers it enumerates from the
+  global config; verified live), and **claude** (full — `enabledMcpjsonServers`
+  gates the project `.mcp.json` AND a generated `.claude/fleet-mcp.json` distilled
+  from every `~/.claude.json` scope is launched with `--strict-mcp-config`, so
+  user-scope servers no longer leak; a claude.ai account connector, absent from
+  `~/.claude.json`, cannot be fed this way and is dropped). Confirmed NOT possible
+  natively (verified empirically): **cursor** and **copilot** — their project MCP
+  config only adds to / overrides the user-scope servers, cannot suppress them,
+  and their disable is global not per-worktree; **antigravity** has no
+  per-workspace MCP config. Those three need the mount-ns loader below. See docs/06.
 
 ## Bigger bets (wait for a real need)
 

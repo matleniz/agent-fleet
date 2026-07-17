@@ -71,6 +71,28 @@ the orchestrator and for judgment, cheap model for mechanical work.
   complexity, duplication) → synthesized proposals as `type:refacto`.
 - **Feature scan** (cloud, monthly): repo direction vs the state of the art found
   by web research, sources mandatory → `type:feature`.
+- **Conversation-feedback** (local, weekly): the shipped workflow-retro routine.
+  Reads how the work actually went across **every** project and worker on the
+  machine and turns recurring method mistakes into durable fixes, not a one-off
+  report. Skill: `conversation-feedback` (in `templates/skills/`, load it from the
+  hub). Input: `fleet chats --scan --all --parse --json` — a fleet-wide inventory
+  of every pack's recorded conversation plus, for each Claude transcript, a parsed
+  method signal (user corrections, tool errors, tool histogram; claude-first,
+  other packs are inventory-only until their parser lands). Dedup: a machine-wide
+  "seen ledger" (`fleet feedback seen/record`, stored at
+  `$FLEET_HOME/feedback-seen.json`) so the same lesson is not re-filed every run —
+  a lesson's recurrence count is itself signal. Output is **hybrid**: one queue
+  proposal per new lesson against the project it came from (`type:doc-proposal`
+  for a concrete doc/skill/AGENTS.md edit, `type:workflow` for a how-we-work item,
+  via the same `propose-doc-change` backend path), **plus** a dated global digest
+  under `$FLEET_HOME/feedback-digests/<date>.md` for the whole-fleet view the
+  per-project issues cannot give. Report-only and mechanical: the skill only reads
+  transcripts, files issues, and writes the digest file — it cannot push or edit
+  the hub. Local because transcripts are local and private; schedule it as a
+  local job (SessionStart hook on claude/gemini, else OS cron), throttled, with a
+  human launching the first validation run and installing the hook (a permission
+  classifier refuses to let an agent wire up its own bypassing agent — see the
+  gotchas above). Below, the older workflow-retro framing it generalizes:
 - **Workflow retro** (local, weekly): read how the work actually went (queue
   health, hub structure, skills freshness, session transcripts if local) → a
   dated report. Local because transcripts are local and private. Once the fleet

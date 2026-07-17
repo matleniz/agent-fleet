@@ -108,10 +108,14 @@ does not cover. All four are usage discipline, not fleet code:
   servers — not whatever the machine happens to have. Support is per CLI: the
   **gemini** pack applies it fully (`mcp.allowed` gates every scope); the
   **opencode** pack fully too (no allowlist key exists, so it disables the
-  non-allowed servers it finds in the global config); the **claude** pack gates
-  the project `.mcp.json` servers via `enabledMcpjsonServers` but NOT user-scope
-  servers in `~/.claude.json` (those still load — launch with `--strict-mcp-config`
-  by hand for full isolation). **cursor** and **copilot** can't: their project MCP
+  non-allowed servers it finds in the global config); the **claude** pack fully
+  too — it gates the project `.mcp.json` via `enabledMcpjsonServers` AND generates
+  a filtered `.claude/fleet-mcp.json` (allowlisted server defs distilled from the
+  project `.mcp.json` and every `~/.claude.json` scope), then `pack_launch`
+  launches with `--strict-mcp-config --mcp-config`, so claude ignores all other
+  MCP config and connects only the allowlist (a claude.ai account connector, not
+  present in `~/.claude.json`, cannot be fed this way and is dropped). **cursor**
+  and **copilot** can't: their project MCP
   config only *adds to / overrides* the user-scope servers, it cannot suppress
   them, and their disable is global rather than per-worktree (both verified).
   **antigravity** has no per-workspace MCP config at all. Unset = inherit

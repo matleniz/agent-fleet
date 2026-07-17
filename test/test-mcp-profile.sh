@@ -40,6 +40,37 @@ jassert "$d/.claude/settings.local.json" 'cfg.get("enableAllProjectMcpServers")=
 jassert "$d/.claude/settings.local.json" '"permissions" in cfg and "hooks" in cfg'    "barrier keys preserved (merge)"
 rm -rf "$d"
 
+echo "[claude] strict --mcp-config profile (fleet-mcp.json distilled from all sources)"
+d="$(mktemp -d)"; h="$(mktemp -d)"; mkdir -p "$d/.claude"
+printf '{"mcpServers":{"linear":{"command":"linear-mcp"},"projonly":{"command":"po"}}}' > "$d/.mcp.json"
+cat > "$h/.claude.json" <<'JSON'
+{"mcpServers":{"github":{"command":"gh-mcp"}},
+ "projects":{"/some/repo":{"mcpServers":{"sentry":{"command":"sentry-mcp"}}}}}
+JSON
+( source "$REPO/packs/claude/pack.sh"; HOME="$h" pack_mcp_profile "$d" "linear github sentry" )
+jassert "$d/.claude/fleet-mcp.json" 'set(cfg["mcpServers"])=={"linear","github","sentry"}' "keeps allowlisted servers across project + user-top + user-project sources"
+jassert "$d/.claude/fleet-mcp.json" 'cfg["mcpServers"]["linear"]["command"]=="linear-mcp"' "def carried from project .mcp.json"
+jassert "$d/.claude/fleet-mcp.json" 'cfg["mcpServers"]["github"]["command"]=="gh-mcp"'     "def carried from ~/.claude.json top-level"
+jassert "$d/.claude/fleet-mcp.json" 'cfg["mcpServers"]["sentry"]["command"]=="sentry-mcp"' "def carried from ~/.claude.json per-project"
+jassert "$d/.claude/fleet-mcp.json" '"projonly" not in cfg["mcpServers"]'                  "non-allowlisted server excluded"
+( source "$REPO/packs/claude/pack.sh"; HOME="$h" pack_mcp_profile "$d" "none" )
+jassert "$d/.claude/fleet-mcp.json" 'cfg["mcpServers"]=={}'                                "none -> zero servers"
+( source "$REPO/packs/claude/pack.sh"; HOME="$h" pack_mcp_profile "$d" "linear notreal" )
+jassert "$d/.claude/fleet-mcp.json" 'set(cfg["mcpServers"])=={"linear"}'                   "unknown server name dropped (not in any source)"
+rm -rf "$d" "$h"
+
+echo "[claude] launch injects --strict-mcp-config only when a profile exists"
+d="$(mktemp -d)"; mkdir -p "$d/.claude"; printf '{"mcpServers":{}}' > "$d/.claude/fleet-mcp.json"
+out="$( cd "$d"; source "$REPO/packs/claude/pack.sh"; _claude_mcp_flags; printf '%s' "${FLEET_MCP_FLAGS[*]}" )"
+case "$out" in
+  *--strict-mcp-config*--mcp-config*) ok "strict flags injected when profile present" ;;
+  *) bad "expected strict flags, got: '$out'" ;;
+esac
+d2="$(mktemp -d)"
+out2="$( cd "$d2"; source "$REPO/packs/claude/pack.sh"; _claude_mcp_flags; printf '%s' "${FLEET_MCP_FLAGS[*]}" )"
+[ -z "$out2" ] && ok "no flags when no profile (opt-in preserved)" || bad "expected empty, got: '$out2'"
+rm -rf "$d" "$d2"
+
 echo "[opencode] allowlist by disabling non-allowed global servers + merge + none"
 d="$(mktemp -d)"; g="$(mktemp -d)"
 printf '{"mcp":{"alpha":{"enabled":true},"beta":{"enabled":true}}}' > "$g/opencode.json"  # global catalogue

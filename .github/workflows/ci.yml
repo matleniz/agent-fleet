@@ -43,8 +43,8 @@ jobs:
         run: |
           set -euo pipefail
           for t in test/docs-sync.sh test/test-context.sh test/test-guard.sh \
-                   test/global.sh test/test-mcp-profile.sh test/dispatch.sh \
-                   test/barrier-guard.sh test/barrier-cursor.sh; do
+                   test/test-chats-scan.sh test/global.sh test/test-mcp-profile.sh \
+                   test/dispatch.sh test/barrier-guard.sh test/barrier-cursor.sh; do
             echo "::group::$t"
             bash "$t"
             echo "::endgroup::"

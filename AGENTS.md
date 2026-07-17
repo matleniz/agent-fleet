@@ -7,10 +7,14 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
 - `bin/` — the canonical tools (`fleet`, `fleet-init`, `new-worker`,
   `fleet-assess`, `fleet-queue`, `fleet-config.sh`, `hub-readonly-guard.py`,
   `fleet-notify`, `fleet-migrate`, `fleet-status.py`, `fleet-context.py`,
+  `fleet-chats-scan.py`, `fleet_chat_parse.py`, `fleet-feedback.py`,
   `fleet_common.py`). Single source of truth; every project uses these via
-  `~/.local/bin` symlinks (`fleet-status.py` / `fleet-context.py` are invoked by
-  `fleet status` / `fleet context`, no symlink, like `hub-readonly-guard.py`;
-  `fleet_common.py` is a shared import of those two, not run directly).
+  `~/.local/bin` symlinks (`fleet-status.py` / `fleet-context.py` /
+  `fleet-chats-scan.py` / `fleet-feedback.py` are invoked by `fleet status` /
+  `fleet context` / `fleet chats --scan` / `fleet feedback`, no symlink, like
+  `hub-readonly-guard.py`; `fleet_common.py` and `fleet_chat_parse.py` are shared
+  imports, not run directly — `fleet_chat_parse.py` also runs standalone as a CLI
+  on one transcript).
 - `packs/` — one dir per agent CLI (`claude`, `gemini`, `opencode`, `cursor`,
   `antigravity`, `copilot`), each a `pack.sh` defining six required functions
   (`pack_launch`, `pack_launch_headless`, `pack_has_sessions`,

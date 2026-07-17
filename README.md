@@ -159,6 +159,9 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet agents / doctor  # enabled packs / installed+logged status per pack
    fleet chats [<worker>] # per-pack pointer to the recorded conversation (read
                           #   to reprise a dead/other agent's session; not portable)
+   fleet chats --scan --all --parse --json  # fleet-wide inventory of recorded
+                          #   conversations + parsed method signal (feedback routine input)
+   fleet feedback list    # the conversation-feedback "seen ledger" (dedup state)
    fleet doctor --write-probe   # prove auto mode can actually write (witness file)
    fleet machines         # the project's machines (selected + registry pool)
    fleet add-agent PACK   # enable another pack (then refreshes every worktree)
@@ -240,7 +243,10 @@ agent-fleet/
 │   ├── fleet-migrate         explicit one-shot migration from the legacy claude-fleet config
 │   ├── fleet-status.py       the whole tree as JSON/text (fleet status), for a UI
 │   ├── fleet-context.py      front-loaded context per role as JSON/text (fleet context)
-│   ├── fleet_common.py       shared .env parser + barrier-file set (imported by the two .py above)
+│   ├── fleet-chats-scan.py   fleet-wide conversation inventory (fleet chats --scan), feedback input
+│   ├── fleet_chat_parse.py   claude JSONL transcript → method signal (imported by the scanner)
+│   ├── fleet-feedback.py     the conversation-feedback seen ledger (fleet feedback)
+│   ├── fleet_common.py       shared .env parser + barrier-file set (imported by the .py tools)
 │   └── fleet-assess          score hub maturity → recommend a posture
 ├── packs/                    one dir per agent CLI: 6 required pack_* functions + optional pack_doctor
 │   ├── claude/pack.sh        Claude Code: launch/resume flags, sessions, barrier settings

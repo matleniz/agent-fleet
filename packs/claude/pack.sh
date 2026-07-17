@@ -31,7 +31,8 @@ pack_launch() {
   [ "${1:-}" = "--resume" ] && resume=(--continue)
   pack_claude_subagent_model
   fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
-  exec claude --permission-mode auto "${resume[@]}"
+  _claude_mcp_flags
+  exec claude --permission-mode auto "${FLEET_MCP_FLAGS[@]}" "${resume[@]}"
 }
 
 # Headless launch for `fleet dispatch`: run one task non-interactively in the same
@@ -44,7 +45,8 @@ pack_launch() {
 pack_launch_headless() {
   pack_claude_subagent_model
   fleet_node_heap_guard
-  exec claude -p "$1" --permission-mode auto ${2:+--model "$2"}
+  _claude_mcp_flags
+  exec claude -p "$1" --permission-mode auto "${FLEET_MCP_FLAGS[@]}" ${2:+--model "$2"}
 }
 
 # fleet global: point Claude's user file (~/.claude/CLAUDE.md) at the canonical
@@ -78,9 +80,12 @@ pack_chat_pointer() {
   ls -t "$d"/*.jsonl 2>/dev/null | head -1
 }
 
-# Worktree-relative files pack_worker_setup writes (the core ignores them
-# when judging a worktree dirty for del/prune).
-pack_barrier_files() { echo ".claude/settings.local.json"; }
+# Worktree-relative files pack_worker_setup / pack_mcp_profile write (the core
+# ignores them when judging a worktree dirty for del/prune). fleet-mcp.json holds
+# the WORKER_MCP strict profile and may carry server credentials copied from
+# ~/.claude.json — it must never be committed; listing it here keeps it untracked
+# and out of del/prune's dirty check (it lives under .claude/, normally gitignored).
+pack_barrier_files() { printf '%s\n' ".claude/settings.local.json" ".claude/fleet-mcp.json"; }
 
 # Per-worktree setup: the read-only-hub barrier. allow:Read +
 # additionalDirectories make the hub readable; the PreToolUse hook
@@ -114,23 +119,68 @@ json.dump(cfg, open(sys.argv[1], "w"), indent=2)
 PY
 }
 
-# Optional: lean worker MCP profile (fleet WORKER_MCP). Writes enabledMcpjsonServers
-# into the worktree's settings.local.json so only the named servers from the
-# project .mcp.json auto-connect ("none" -> none). CAVEAT: this gates the project
-# .mcp.json servers only; user-scope servers (~/.claude.json) still load — full
-# isolation would need launching with --strict-mcp-config (not done here). Merges
-# into the barrier settings already written, so it survives a fleet refresh.
+# Optional: lean worker MCP profile (fleet WORKER_MCP). FULL isolation for claude,
+# in two layers:
+#   1) settings.local.json enabledMcpjsonServers — the project .mcp.json gate
+#      (kept for the case launch runs without the strict flag).
+#   2) .claude/fleet-mcp.json — a filtered {"mcpServers": {...}} distilled from
+#      EVERY CLI MCP source (project .mcp.json + ~/.claude.json top-level and its
+#      per-project mcpServers), keeping only the allowlisted names. pack_launch
+#      then launches with `--strict-mcp-config --mcp-config <that file>`, so
+#      claude ignores ALL other MCP config (project AND user-scope ~/.claude.json)
+#      and connects only the allowlist. "none" -> zero servers.
+# Both are merged/rewritten idempotently, so a fleet refresh re-applies them.
+# CAVEAT: a name not found in any CLI source is dropped (e.g. a claude.ai account
+# connector, which is not in ~/.claude.json and cannot be fed via --mcp-config).
+# fleet-mcp.json can contain server credentials from ~/.claude.json — it is a
+# barrier file (never committed); see pack_barrier_files.
+# Fill the global array FLEET_MCP_FLAGS with the WORKER_MCP strict-profile flags,
+# if pack_mcp_profile generated a filtered config for this worktree (cwd): adds
+# `--strict-mcp-config --mcp-config <abs path>` so claude connects ONLY the
+# allowlisted servers. Empties the array when the profile is not in use
+# (WORKER_MCP unset), so a normal launch is unaffected. Called by pack_launch /
+# pack_launch_headless (defined above; bash resolves it at call time).
+_claude_mcp_flags() {
+  FLEET_MCP_FLAGS=()
+  local mc="$PWD/.claude/fleet-mcp.json"
+  [ -f "$mc" ] && FLEET_MCP_FLAGS=(--strict-mcp-config --mcp-config "$mc")
+}
+
 pack_mcp_profile() {  # <dest> <allowlist>
   local dest="$1"; mkdir -p "$dest/.claude"
-  WORKER_MCP_ALLOW="$2" python3 - "$dest/.claude/settings.local.json" <<'PY'
-import json, os, sys
+  WORKER_MCP_ALLOW="$2" WORKER_MCP_DEST="$dest" python3 <<'PY'
+import json, os
 allow = os.environ["WORKER_MCP_ALLOW"].split()
 if allow == ["none"]: allow = []
-try: cfg = json.load(open(sys.argv[1]))
-except Exception: cfg = {}
+dest = os.environ["WORKER_MCP_DEST"]
+
+def load(path):
+    try:
+        with open(os.path.expanduser(path)) as fh: return json.load(fh)
+    except Exception: return {}
+
+# Layer 1: the project .mcp.json gate in settings.local.json.
+settings = os.path.join(dest, ".claude", "settings.local.json")
+cfg = load(settings)
 cfg["enableAllProjectMcpServers"] = False
 cfg["enabledMcpjsonServers"] = allow
-json.dump(cfg, open(sys.argv[1], "w"), indent=2)
+with open(settings, "w") as fh: json.dump(cfg, fh, indent=2)
+
+# Layer 2: the strict config — filtered server defs from every CLI source.
+# Precedence (last wins): user per-project, user top-level, then project .mcp.json.
+candidates = {}
+uj = load("~/.claude.json")
+user_top = uj.get("mcpServers") or {}
+user_proj = {}
+for pv in (uj.get("projects") or {}).values():
+    if isinstance(pv, dict):
+        user_proj.update(pv.get("mcpServers") or {})
+proj = load(os.path.join(dest, ".mcp.json")).get("mcpServers") or {}
+for src in (user_proj, user_top, proj):
+    for name, defn in src.items(): candidates[name] = defn
+filtered = {n: candidates[n] for n in allow if n in candidates}
+with open(os.path.join(dest, ".claude", "fleet-mcp.json"), "w") as fh:
+    json.dump({"mcpServers": filtered}, fh, indent=2)
 PY
 }
 

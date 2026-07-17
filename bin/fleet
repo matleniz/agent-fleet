@@ -52,6 +52,8 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
   context [--role R] [--json] [--budget N]  what an agent auto-reads at launch
                        (per role, with ~token estimates); --budget N exits non-zero
                        if a role's front-load exceeds N tokens
+  feedback <seen|record|list|prune>  the conversation-feedback "seen ledger"
+                       (dedup for the feedback routine; see chats --scan)
   peek <machine> <win>     dump a session's terminal (tmux capture-pane)
   send <machine> <win> "<text>"  type <text>+Enter into a session
   global [status|edit] install/rewire one per-user instructions file into every
@@ -68,6 +70,9 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
   chats [<worker>]     per-pack pointer to the conversation recorded in the
                        worktree (bare = the hub/coordinator); read it to reprise
                        a dead/other agent's session (transcripts are not portable)
+  chats --scan [--all] [--parse] [--json]  fleet-wide inventory of recorded
+                       conversations (hub + all worktrees); --parse attaches each
+                       claude transcript's method signal (conversation-feedback input)
   doctor [--write-probe]  per-pack status: installed? version? logged in?
                        --write-probe [--machine M] also does a real witness write
                        in auto mode to prove the box can actually write
@@ -103,7 +108,7 @@ if [ -z "$sub" ]; then
       case "${1:-}" in -h|--help|"") exec "$SELF_DIR/fleet-init" ;; esac
       exec "$SELF_DIR/fleet-init" "$@" ;;
     ""|hub) sub="hub"; [ $# -gt 0 ] && shift ;;
-    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|chats|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|peek|send|_dispatch-run)
+    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|chats|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|feedback|peek|send|_dispatch-run)
       sub="$1"; [ "$sub" = worker ] && sub=w; [ "$sub" = remote ] && sub=r; shift ;;
     -*) echo "error: unknown option '$1'" >&2; exit 2 ;;
     *)
@@ -114,9 +119,10 @@ if [ -z "$sub" ]; then
   esac
 fi
 
-# `global` is machine-wide (per-user instructions), not per-project — like
-# `init`, it resolves no project.
-if [ "$sub" != global ]; then
+# `global` (per-user instructions) and `feedback` (the machine-wide seen ledger,
+# spanning every project) are machine-wide, not per-project — like `init`, they
+# resolve no project.
+if [ "$sub" != global ] && [ "$sub" != feedback ]; then
   fleet_resolve_conf "$proj"
   export FLEET_CONF   # so new-worker reuses the exact same project config
   PROJ_NAME="$(basename "$CONF" .env)"
@@ -598,6 +604,14 @@ cmd_agents() {
 # agent at a pointer to READ the prior transcript — the durable handoff is still
 # the hub, this is the fallback for what never got written there.
 cmd_chats() {
+  # fleet chats --scan [--project P|--all] [--json]: fleet-wide inventory of the
+  # conversations every pack recorded (hub + all worktrees, all projects) — the
+  # input the conversation-feedback routine reads. Delegates to the read-only
+  # Python scanner (local machine only; transcripts are local/private).
+  if [ "${1:-}" = --scan ]; then
+    shift
+    exec python3 "$SELF_DIR/fleet-chats-scan.py" "$@"
+  fi
   local name="${1:-}" dir
   if [ -n "$name" ]; then
     need_code_repo; dir="$WT_HOME/$name"
@@ -1050,6 +1064,10 @@ cmd_context() {  # fleet context [--role R] [--json] [--budget N] — front-load
   exec python3 "$SELF_DIR/fleet-context.py" "$@"
 }
 
+cmd_feedback() {  # fleet feedback <seen|record|list|prune> — conversation-feedback seen ledger
+  exec python3 "$SELF_DIR/fleet-feedback.py" "$@"
+}
+
 # ---------- dispatch ----------
 
 case "$sub" in
@@ -1067,12 +1085,13 @@ case "$sub" in
   refresh)     cmd_refresh "${1:-}" ;;
   add-agent)   cmd_add_agent "${1:-}" ;;
   agents)      cmd_agents ;;
-  chats)       cmd_chats "${1:-}" ;;
+  chats)       cmd_chats "$@" ;;
   doctor)      cmd_doctor "$@" ;;
   sync-remote) cmd_sync_remote "${1:-}" ;;
   machines)    cmd_machines "$@" ;;
   status)      cmd_status "$@" ;;
   context)     cmd_context "$@" ;;
+  feedback)    cmd_feedback "$@" ;;
   peek)        cmd_peek "$@" ;;
   send)        cmd_send "$@" ;;
 esac

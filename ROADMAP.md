@@ -5,28 +5,49 @@ live in `BACKLOG.md`.
 
 ## Next (most urgent)
 
-### Fleet-wide conversation-feedback routine
+### Fleet-wide conversation-feedback routine  [tooling shipped; scheduling is instance-side]
 A scheduled routine (see `docs/04-routines.md`) that analyzes the recorded
-conversations across **all** workers and sessions — every project, every machine —
-and turns them into method improvements, not a one-off report. Inputs: the
-`fleet chats` per-pack conversation pointers / CLI transcripts. Output: recurring
-patterns and working-method lessons (what recurs, where workers go wrong, what the
-durable instructions should have said) fed back as **proposed changes** to the
-trusted context — `AGENTS.md`, skills, global instructions — through the same
-freshness / `propose-doc-change` path a worker uses, so a lesson lands where it
-will be front-loaded next time instead of being lost in a log.
+conversations across **all** workers and sessions and turns them into method
+improvements, not a one-off report, fed back as **proposed changes** to the
+trusted context through the same freshness / `propose-doc-change` path a worker
+uses — so a lesson lands where it will be front-loaded next time instead of being
+lost in a log.
+
+Shipped:
+- **Input** — `fleet chats --scan [--all] [--parse] [--json]`
+  (`bin/fleet-chats-scan.py`): fleet-wide inventory of every pack's recorded
+  conversation (hub + all worktrees, all projects), with `--parse` attaching a
+  claude-first method signal via `bin/fleet_chat_parse.py` (user corrections,
+  tool errors, tool histogram). Local machine only.
+- **Dedup** — a machine-wide "seen ledger", `fleet feedback seen/record/list/prune`
+  (`bin/fleet-feedback.py`, at `$FLEET_HOME/feedback-seen.json`), so a lesson is
+  not re-filed every run; recurrence count is itself signal.
+- **Method + hybrid output** — the `conversation-feedback` skill
+  (`templates/skills/`): per-project queue proposals (`type:doc-proposal` /
+  `type:workflow`) **plus** a dated global digest under
+  `$FLEET_HOME/feedback-digests/`. Report-only and mechanical.
+- **Tests** — `test/test-chats-scan.sh` (scanner + parser + ledger).
+
+Remaining:
+- **Scheduling wiring is instance-side** (not repo code): install the local job
+  (SessionStart hook on claude/gemini, else OS cron), throttled; a human launches
+  the first validation run and installs the hook (`docs/04` gotchas).
+- **Non-claude transcript parsers** (gemini `chats/`, antigravity SQLite, copilot
+  session-state, cursor, opencode) — inventory-only today; each plugs in at the
+  parser layer (`fleet_chat_parse.detect_format` + a sibling parser), no scanner
+  change. Deferred until needed.
+- **Cross-machine** — local only today; a remote would follow the
+  `fleet status --remote` ssh pattern.
 
 Why now: the fleet already scales *work* across many sessions but has no loop that
-scales *learning* from them; every session repeats avoidable mistakes. Builds on
-`fleet chats` (the input), `docs/04` (scheduling), the freshness/proposal model
-(how a lesson lands), and the transcript-parsing groundwork in `BACKLOG.md`. Open
-design: aggregate to a per-project queue item vs a single global digest; and
-dedup so the same lesson is not re-flagged every run (keep a "seen" ledger).
+scales *learning* from them; every session repeats avoidable mistakes.
 
 ### MCP lean profile — finish the coverage
-`WORKER_MCP` is native on gemini/opencode (full) and claude (partial). Remaining:
-the generic CLI-agnostic mount-namespace loader for cursor/copilot/antigravity
-(designed in `BACKLOG.md`) and claude full isolation via `--strict-mcp-config`.
+`WORKER_MCP` is native and FULL on gemini, opencode, and claude (claude now via a
+generated `.claude/fleet-mcp.json` + `--strict-mcp-config` at launch — see
+`packs/claude/pack.sh`, `test/test-mcp-profile.sh`, `docs/06`). Remaining: the
+generic CLI-agnostic mount-namespace loader for cursor/copilot/antigravity
+(designed in `BACKLOG.md`, a bigger bet — wait for a real need).
 
 ## Resource management (anti-crash)  [mostly shipped]
 
