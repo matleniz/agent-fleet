@@ -167,6 +167,36 @@ fleet_node_heap_guard() {
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=$mb"
 }
 
+# Shared name validator for project / worker / dispatch names. These names thread
+# UNQUOTED through composed tmux / ssh / docker command strings (window_cmd,
+# session_window, cmd_dispatch's remote branch, cmd_remote del), so a name with
+# shell metacharacters is an injection surface, not just a bad label. Restrict to a
+# safe charset once, at every entry point (fleet-init, cmd_worker, cmd_dispatch,
+# new-worker), instead of trusting the caller. Returns 2 and explains on stderr.
+fleet_valid_name() {  # <name> [<what>]
+  case "${1-}" in
+    '') echo "error: empty ${2:-name}" >&2; return 2 ;;
+    *[!a-zA-Z0-9._-]*)
+      echo "error: ${2:-name} '$1' — use only letters, digits, '.', '_', '-'" >&2; return 2 ;;
+  esac
+  return 0
+}
+
+# Seed a directly-usable file from a template that wraps its real payload in a
+# ```markdown fenced block (the surrounding prose is maintainer docs — how the file
+# gets wired — NOT meant for the seeded file). Extracts only the fenced payload so
+# a fresh hub/global AGENTS.md opens on clean instructions, not the template header
+# and a dangling fence. Falls back to a whole-file copy if there is no such fence
+# (so an already-clean template still works). Used by fleet-init and cmd_global.
+fleet_seed_from_template() {  # <template> <dest>
+  local tpl="$1" dest="$2"
+  if grep -q '^```markdown$' "$tpl" 2>/dev/null; then
+    awk '/^```markdown$/{f=1;next} f&&/^```$/{exit} f' "$tpl" > "$dest"
+  else
+    cp "$tpl" "$dest"
+  fi
+}
+
 # Defaults + exports read by the packs' pack_worker_setup (called by both
 # new-worker and fleet's refresh path, after fleet_resolve_conf).
 fleet_export_worker_env() {

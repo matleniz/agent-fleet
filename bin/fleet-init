@@ -24,6 +24,9 @@
 #              [--force]                 (overwrite an existing <name>.env)
 set -euo pipefail
 SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# Shared helpers (fleet_valid_name, fleet_seed_from_template) + the legacy-config
+# guard. fleet-init keeps its own ROOT var below; no collision with fleet-config's.
+. "$SELF_DIR/fleet-config.sh"
 TEMPLATES="$SELF_DIR/../templates"
 ROOT="${FLEET_HOME:-$HOME/.config/fleet}"
 PROJECTS="$ROOT/projects"
@@ -68,9 +71,7 @@ case "$name" in
   ""|-h|--help) usage ;;
   -*) echo "error: first argument must be the project name (got option '$name')" >&2; usage ;;
 esac
-case "$name" in *[!a-zA-Z0-9._-]*)
-  echo "error: project name '$name' — use only letters, digits, '.', '_', '-'" >&2; exit 2 ;;
-esac
+fleet_valid_name "$name" "project name" || exit 2
 
 code="" hub="" wt="" base="" agents="claude" ntfy="" remotehost="" machines_sel="" queue="none"
 lt="" lpid="" lpname="" ghrepo="" force=0 queue_explicit=0
@@ -214,7 +215,7 @@ if [ -n "$hub" ]; then
       set -e
       cd "$seed" && git init -q -b main
       cp "$TEMPLATES/hub-INDEX.md"  INDEX.md
-      cp "$TEMPLATES/hub-AGENTS.md" AGENTS.md
+      fleet_seed_from_template "$TEMPLATES/hub-AGENTS.md" AGENTS.md
       printf '@AGENTS.md\n' > CLAUDE.md
       case " $agents " in *" gemini "*)
         mkdir -p .gemini

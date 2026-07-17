@@ -42,6 +42,7 @@ $(git -C "$CODE_REPO" worktree list 2>/dev/null | sed 's/^/  /')
 USAGE
   exit 2
 fi
+fleet_valid_name "$name" "worker name" || exit 2
 
 dest="$WT_HOME/$name"
 if [ -e "$dest" ]; then echo "error: $dest already exists" >&2; exit 1; fi

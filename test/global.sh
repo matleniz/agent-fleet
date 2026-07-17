@@ -49,11 +49,14 @@ run "$H" global >/dev/null 2>&1 || fail "second fleet global errored"
 { [ -L "$H/.gemini/GEMINI.md" ] && [ ! -e "$H/.gemini/GEMINI.md.bak.bak" ]; } || fail "gemini re-symlink not idempotent"
 echo "PASS: idempotent (no duplicate import / re-migration / double backup)"
 
-# --- sandbox 2: no CLAUDE.md -> template seed ---
+# --- sandbox 2: no CLAUDE.md -> template seed (CLEAN payload, not the wrapper) ---
 run "$H2" global >/dev/null 2>&1 || fail "fleet global (fresh) errored"
-grep -q "Template: global context file" "$H2/.agents/AGENTS.md" || fail "canonical not seeded from template when no CLAUDE.md"
+seeded="$H2/.agents/AGENTS.md"
+grep -q "global context" "$seeded" || fail "canonical not seeded from template when no CLAUDE.md"
+grep -q "Template: global context file" "$seeded" && fail "canonical seeded WITH the template wrapper header (payload not extracted)"
+grep -q '```' "$seeded" && fail "canonical still has a code fence (payload not extracted from the template)"
 [ "$(cat "$H2/.claude/CLAUDE.md")" = "@$H2/.agents/AGENTS.md" ] || fail "fresh claude bridge not written"
-echo "PASS: template seeding when no prior CLAUDE.md"
+echo "PASS: template seeding yields the clean fenced payload (no wrapper header / fence)"
 
 # --- cursor per-worktree fallback (no native global file) ---
 git -C "$WT" init -q

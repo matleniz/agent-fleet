@@ -161,3 +161,35 @@ echo "PASS (layer 3): remote dispatch delegates to the container (ssh+docker, ta
 FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox doctor --write-probe 2>&1 \
   | grep -q "write-probe: PASS" || fail "doctor --write-probe did not report PASS for a writing pack"
 echo "PASS (layer 4): fleet doctor --write-probe runs the witness write per pack"
+
+# ---------- Layer 4b: --write-probe honors --machine AFTER the subcommand -----
+# Regression: cmd_doctor used to inspect only $1, so a trailing --machine was
+# dropped and it always probed local. With the ssh stub, targeting 'vm' must go
+# remote (an ssh 'doctor --write-probe' to the container), not run locally.
+: > "$SSHLOG"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$SSHLOG"\n' > "$stub/ssh"; chmod +x "$stub/ssh"
+FLEET_PACKS_DIR="$packs" PATH="$stub:$PATH" "$ENGINE/bin/fleet" --project sandbox \
+  doctor --write-probe --machine vm >/dev/null 2>&1 || true
+grep -q "doctor --write-probe" "$SSHLOG" \
+  || fail "doctor --write-probe --machine vm did not target the VM (trailing --machine dropped?)"
+rm -f "$stub/ssh"
+echo "PASS (layer 4b): doctor --write-probe honors --machine after the subcommand"
+
+# ---------- Layer 5: input validation (names + flag values) -------------------
+# 5a: worker/dispatch names with shell metacharacters are refused (they otherwise
+# thread UNQUOTED through tmux/ssh). 5b: --model with no value must error, not
+# busy-loop forever (the old `shift 2 || true` hang).
+FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox -a stub \
+  dispatch 'bad;name' "x" >/dev/null 2>&1 && fail "dispatch accepted an unsafe worker name"
+[ ! -e "$ROOT/wt/bad;name" ] || fail "unsafe-named worktree was created"
+FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox -a stub \
+  w 'evil$(touch pwned)' >/dev/null 2>&1 && fail "fleet w accepted an unsafe worker name"
+echo "PASS (layer 5a): unsafe worker/dispatch names are refused"
+
+guard=""; command -v timeout >/dev/null && guard="timeout 10"
+rc=0
+$guard env FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox -a stub \
+  dispatch --model >/dev/null 2>&1 || rc=$?
+[ "$rc" = 124 ] && fail "dispatch --model (no value) HUNG (busy-loop regression)"
+[ "$rc" != 0 ] || fail "dispatch --model (no value) should error, not succeed"
+echo "PASS (layer 5b): dispatch --model with no value errors instead of hanging"

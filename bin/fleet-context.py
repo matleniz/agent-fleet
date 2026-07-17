@@ -199,10 +199,13 @@ def on_demand(env):
         if e:
             e["note"] = "read it, open the one file, grep the section"
             items.append(e)
-    # skill bodies (sum) from the coordinator's view
-    coord = coordinator_report(env)
-    if coord and coord["skill_body_bytes"]:
-        b = coord["skill_body_bytes"]
+    # Skill bodies (sum) from whichever role is present: coordinator if there's a
+    # hub, else the worker. A hub-less (solo/early) project still has skills sitting
+    # in its code repo, and the front-loaded vs on-demand contrast is exactly the
+    # point of this tool — it must not vanish just because there's no hub.
+    rep = coordinator_report(env) or worker_report(env)
+    if rep and rep.get("skill_body_bytes"):
+        b = rep["skill_body_bytes"]
         items.append({"path": "(skill bodies)", "label": "skill bodies",
                       "bytes": b, "tokens": tok(b), "note": "loaded only on invocation"})
     return items
@@ -235,7 +238,7 @@ def render_text(report):
         for e in report["on_demand"]:
             note = ("  " + e["note"]) if e.get("note") else ""
             out.append("  %-42s %8d b%s" % (e["label"][:42], e["bytes"], note))
-        out.append("  docs/ and hub content            navigated via INDEX, never auto-loaded")
+        out.append("  docs/ and hub content            navigated on demand, never auto-loaded")
         out.append("")
     for n in report["notes"]:
         out.append("note: " + n)

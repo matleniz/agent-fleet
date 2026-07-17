@@ -243,6 +243,7 @@ cmd_hub() {
 cmd_worker() {
   local name="${1:-}" base="${2:-}"
   [ -z "$name" ] && { echo "usage: fleet w <name> [base]" >&2; exit 2; }
+  fleet_valid_name "$name" "worker name" || exit 2
   need_agent
   # Not yet in a tmux window: pick the machine and (re)open the worker window
   # there, then attach. The worktree itself is created inside that window, on the
@@ -614,6 +615,14 @@ cmd_chats() {
 
 cmd_doctor() {
   if [ "${1:-}" = --write-probe ]; then
+    shift
+    # Accept `--machine M` AFTER the subcommand too: the global flag parser stops at
+    # the subcommand token, so `fleet doctor --write-probe --machine M` would
+    # otherwise drop --machine and probe local. Feed it into $machine (target_machine
+    # reads it), so both flag orders reach the intended box.
+    case "${1:-}" in
+      --machine) [ $# -ge 2 ] || { echo "error: --machine needs a value" >&2; exit 2; }; machine="$2"; shift 2 ;;
+    esac
     target_machine local
     doctor_write_probe
     return
@@ -766,8 +775,8 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [ba
   # (deleted) after reading, same as _dispatch-run's taskfile.
   while :; do
     case "${1:-}" in
-      --model)     model="${2:-}"; shift 2 || true ;;
-      --task-file) taskfile_in="${2:-}"; shift 2 || true ;;
+      --model)     [ $# -ge 2 ] || { echo "error: --model needs a value" >&2; exit 2; }; model="$2"; shift 2 ;;
+      --task-file) [ $# -ge 2 ] || { echo "error: --task-file needs a value" >&2; exit 2; }; taskfile_in="$2"; shift 2 ;;
       *) break ;;
     esac
   done
@@ -780,6 +789,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [ba
   fi
   local base="${1:-}"
   [ -z "$name" ] || [ -z "$task" ] && { echo "usage: fleet [--machine M] dispatch [--model M] <name> \"<task>\" [base]" >&2; exit 2; }
+  fleet_valid_name "$name" "worker name" || exit 2   # threads through tmux/ssh unquoted
   need_agent
   # Resolve the target machine (honors --machine); dispatch defaults to local.
   target_machine local
@@ -920,7 +930,7 @@ global_ensure_canon() {
     echo "[fleet] migrated $claudemd -> $canon (backup: $claudemd.bak)"
   else
     tpl="$SELF_DIR/../templates/global-AGENTS.md"
-    if [ -f "$tpl" ]; then cp "$tpl" "$canon"; else printf '# global agent instructions\n' > "$canon"; fi
+    if [ -f "$tpl" ]; then fleet_seed_from_template "$tpl" "$canon"; else printf '# global agent instructions\n' > "$canon"; fi
     echo "[fleet] seeded $canon"
   fi
 }
