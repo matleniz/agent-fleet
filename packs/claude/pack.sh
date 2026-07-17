@@ -63,7 +63,7 @@ pack_global_setup() {
 # Claude Code stores sessions per project dir under ~/.claude/projects/,
 # with the absolute path munged (slashes -> dashes), one .jsonl per session.
 pack_has_sessions() {
-  local d="$HOME/.claude/projects/$(printf '%s' "$1" | sed 's#/#-#g')"
+  local d; d="$HOME/.claude/projects/$(printf '%s' "$1" | sed 's#/#-#g')"
   [ -d "$d" ] && ls "$d"/*.jsonl >/dev/null 2>&1
 }
 
