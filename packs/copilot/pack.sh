@@ -104,6 +104,13 @@ pack_has_sessions() {
   [ -n "$(_cop_session_for "$1")" ]
 }
 
+# Optional: pointer to the recorded conversation for <dir> (fleet chats) — the
+# session-state dir of the newest session whose cwd is <dir>. Empty if none.
+pack_chat_pointer() {
+  local sid; sid="$(_cop_session_for "$1")"
+  [ -n "$sid" ] && echo "$HOME/.copilot/session-state/$sid/"
+}
+
 # Install line for the VM image / a fresh machine. Auth: `copilot login` (OAuth
 # device flow; on a box without a system keychain, rerun and accept plaintext
 # storage), or a token in COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN (the

@@ -146,6 +146,8 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet peek local hub   # dump a session's terminal   ·   fleet send local hub "y"
    fleet del my-task      # remove one (guarded)  ·  fleet prune  = all merged ones
    fleet agents / doctor  # enabled packs / installed+logged status per pack
+   fleet chats [<worker>] # per-pack pointer to the recorded conversation (read
+                          #   to reprise a dead/other agent's session; not portable)
    fleet doctor --write-probe   # prove auto mode can actually write (witness file)
    fleet machines         # the project's machines (selected + registry pool)
    fleet add-agent PACK   # enable another pack (then refreshes every worktree)

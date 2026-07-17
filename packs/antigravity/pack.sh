@@ -94,6 +94,28 @@ except Exception:
 PY
 }
 
+# Optional: pointer to the recorded conversation for <dir> (fleet chats). agy
+# stores conversations in a sqlite db; the pointer is the db + the matching
+# conversation_id (readable via sqlite3). Empty if none.
+pack_chat_pointer() {
+  [ -f "$_agy_db" ] || return 0
+  local cid
+  cid="$(python3 - "$_agy_db" "$1" <<'PY'
+import sqlite3, sys
+try:
+    db = sqlite3.connect(sys.argv[1])
+    row = db.execute(
+        "SELECT conversation_id FROM conversation_summaries "
+        "WHERE workspace_uris LIKE ? ORDER BY last_modified_time DESC LIMIT 1",
+        (f"%{sys.argv[2]}%",)).fetchone()
+    print(row[0] if row else "")
+except Exception:
+    print("")
+PY
+)"
+  [ -n "$cid" ] && echo "$_agy_db (conversation_id=$cid)"
+}
+
 # pack_worker_setup writes nothing: the barrier is a launch-time mount
 # namespace (see _fleet_hub_ro_exec), not a file in the worktree.
 pack_barrier_files() { :; }

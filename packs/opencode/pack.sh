@@ -80,6 +80,15 @@ sys.exit(0 if any(s.get("directory") == sys.argv[1] for s in sessions) else 1)
 ' "$dir"
 }
 
+# Optional: pointer to the recorded conversation for <dir> (fleet chats).
+# opencode sessions are repo-scoped (not a per-worktree file), so the pointer is
+# the list command filtered to this directory. Only shown when one exists.
+pack_chat_pointer() {
+  local dir="$1"
+  pack_has_sessions "$dir" 2>/dev/null || return 0
+  echo "opencode session list --format json  | jq '.[]|select(.directory==\"$dir\")'"
+}
+
 # Worktree-relative files pack_worker_setup writes (the core ignores them
 # when judging a worktree dirty for del/prune).
 pack_barrier_files() { echo "opencode.json"; }

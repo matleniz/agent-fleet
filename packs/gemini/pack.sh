@@ -47,6 +47,16 @@ pack_has_sessions() {
   return 1
 }
 
+# Optional: readable pointer to the recorded conversation for <dir> (fleet chats).
+pack_chat_pointer() {
+  local dir="$1" d
+  for d in "$HOME/.gemini/tmp"/*/; do
+    [ -f "$d.project_root" ] || continue
+    [ "$(cat "$d.project_root" 2>/dev/null)" = "$dir" ] || continue
+    ls "$d"chats/* >/dev/null 2>&1 && { echo "${d}chats/"; return 0; }
+  done
+}
+
 # Worktree-relative files pack_worker_setup writes (the core ignores them
 # when judging a worktree dirty for del/prune).
 pack_barrier_files() { echo ".gemini/settings.json"; }

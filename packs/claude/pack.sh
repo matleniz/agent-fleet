@@ -67,6 +67,15 @@ pack_has_sessions() {
   [ -d "$d" ] && ls "$d"/*.jsonl >/dev/null 2>&1
 }
 
+# Optional: a READABLE pointer to this pack's recorded conversation for an agent
+# that ran in <dir> — for `fleet chats` (cross-agent reprise; transcripts are not
+# CLI-portable, so a new agent READS it, it does not resume it). Empty if none.
+pack_chat_pointer() {
+  local d; d="$HOME/.claude/projects/$(printf '%s' "$1" | sed 's#/#-#g')"
+  [ -d "$d" ] && ls "$d"/*.jsonl >/dev/null 2>&1 || return 0
+  ls -t "$d"/*.jsonl 2>/dev/null | head -1
+}
+
 # Worktree-relative files pack_worker_setup writes (the core ignores them
 # when judging a worktree dirty for del/prune).
 pack_barrier_files() { echo ".claude/settings.local.json"; }

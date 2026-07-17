@@ -65,6 +65,9 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
   refresh [<name>]     re-run enabled packs' worker setup (one worktree, or all)
   add-agent <pack>     enable a pack for this project, then refresh worktrees
   agents               enabled packs for this project (default first)
+  chats [<worker>]     per-pack pointer to the conversation recorded in the
+                       worktree (bare = the hub/coordinator); read it to reprise
+                       a dead/other agent's session (transcripts are not portable)
   doctor [--write-probe]  per-pack status: installed? version? logged in?
                        --write-probe [--machine M] also does a real witness write
                        in auto mode to prove the box can actually write
@@ -100,7 +103,7 @@ if [ -z "$sub" ]; then
       case "${1:-}" in -h|--help|"") exec "$SELF_DIR/fleet-init" ;; esac
       exec "$SELF_DIR/fleet-init" "$@" ;;
     ""|hub) sub="hub"; [ $# -gt 0 ] && shift ;;
-    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|peek|send|_dispatch-run)
+    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|chats|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|peek|send|_dispatch-run)
       sub="$1"; [ "$sub" = worker ] && sub=w; [ "$sub" = remote ] && sub=r; shift ;;
     -*) echo "error: unknown option '$1'" >&2; exit 2 ;;
     *)
@@ -581,6 +584,32 @@ cmd_agents() {
   echo "(fleet doctor for install/login status; fleet add-agent <pack> to enable one)"
 }
 
+# fleet chats [<worker>]: per enabled pack, a READABLE pointer to the conversation
+# that pack recorded for the agent that ran in the worker's worktree (or, bare, in
+# the hub for the coordinator). For a cross-agent reprise: sessions are NOT
+# portable between CLIs, so when you switch agents (or one dies), point the new
+# agent at a pointer to READ the prior transcript — the durable handoff is still
+# the hub, this is the fallback for what never got written there.
+cmd_chats() {
+  local name="${1:-}" dir
+  if [ -n "$name" ]; then
+    need_code_repo; dir="$WT_HOME/$name"
+    [ -d "$dir" ] || { echo "error: no worktree $dir" >&2; exit 1; }
+  else
+    dir="${HUB:-}"
+    [ -n "$dir" ] || { echo "usage: fleet chats <worker>   (the bare form needs a hub, for the coordinator)" >&2; exit 2; }
+  fi
+  echo "recorded conversations for $dir"
+  echo "  (read one to reprise a dead/other session; transcripts are NOT CLI-portable — read, do not resume):"
+  local a p
+  for a in $(fleet_agents); do
+    p="$( ( fleet_load_pack "$a" >/dev/null 2>&1 \
+            && declare -F pack_chat_pointer >/dev/null \
+            && pack_chat_pointer "$dir" ) 2>/dev/null || true )"
+    printf '  %-12s %s\n' "$a" "${p:-(none found)}"
+  done
+}
+
 cmd_doctor() {
   if [ "${1:-}" = --write-probe ]; then
     target_machine local
@@ -997,6 +1026,7 @@ case "$sub" in
   refresh)     cmd_refresh "${1:-}" ;;
   add-agent)   cmd_add_agent "${1:-}" ;;
   agents)      cmd_agents ;;
+  chats)       cmd_chats "${1:-}" ;;
   doctor)      cmd_doctor "$@" ;;
   sync-remote) cmd_sync_remote "${1:-}" ;;
   machines)    cmd_machines "$@" ;;

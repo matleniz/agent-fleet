@@ -29,6 +29,13 @@ pack_has_sessions() {
   [ -d "$HOME/.cursor/chats/$h" ] && ls "$HOME/.cursor/chats/$h"/* >/dev/null 2>&1
 }
 
+# Optional: readable pointer to the recorded conversation for <dir> (fleet chats).
+pack_chat_pointer() {
+  local h; h="$(printf '%s' "$1" | md5sum | cut -d' ' -f1)"
+  local d="$HOME/.cursor/chats/$h"
+  [ -d "$d" ] && ls "$d"/* >/dev/null 2>&1 && echo "$d"
+}
+
 # Worktree-relative files pack_worker_setup writes (the core ignores them
 # when judging a worktree dirty for del/prune).
 pack_barrier_files() { echo ".cursor/cli.json"; echo ".cursor/rules/00-fleet-user.mdc"; }
