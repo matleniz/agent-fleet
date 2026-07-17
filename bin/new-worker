@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# new-worker — create a code-repo git worktree for a parallel agent worker.
+# Low-level, non-interactive (scriptable). The `fleet` launcher wraps this and
+# also opens/resumes/lists agent sessions. Use new-worker directly from scripts
+# or routines; use `fleet` for interactive daily work.
+#
+# The worktree is READ-ONLY on the docs hub (if the project has one): each
+# enabled agent pack (AGENTS="claude gemini" in the project .env) installs its
+# own barrier via pack_worker_setup — e.g. the claude pack writes a PreToolUse
+# hook, NOT a deny rule (a deny does not override an additionalDirectories
+# root). Projects without a hub get a plain worktree, no barrier. Because every
+# enabled pack sets up the same worktree, any enabled agent can open it.
+#
+# Config is per-project: ~/.config/fleet/projects/<name>.env, resolved by
+# --project / $FLEET_PROJECT / cwd (no implicit default). Required: CODE_REPO, WT_HOME.
+# Optional: HUB, AGENTS, TOOLS_VENV, DEFAULT_BASE, GUARD.
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+. "$SELF_DIR/fleet-config.sh"
+
+proj=""
+if [ "${1:-}" = "--project" ]; then proj="${2:-}"; shift 2; fi
+fleet_resolve_conf "$proj"
+
+DEFAULT_BASE="${DEFAULT_BASE:-origin/main}"
+: "${CODE_REPO:?set CODE_REPO in $CONF}"
+: "${WT_HOME:?set WT_HOME in $CONF}"
+fleet_export_worker_env   # HUB/GUARD/NOTIFY/NTFY_TOPIC, read by pack_worker_setup
+
+name="${1:-}"
+base="${2:-$DEFAULT_BASE}"
+
+if [ -z "$name" ]; then
+  cat <<USAGE
+usage: new-worker [--project <name>] <worker-name> [base-branch]
+  project     : $(basename "$CONF" .env)   code: $CODE_REPO   hub: ${HUB:-<none>}   agents: $(fleet_agents)
+  Creates $WT_HOME/<name> on a NEW branch <name> from <base-branch>
+  (base defaults to $DEFAULT_BASE)$([ -n "$HUB" ] && echo ", read-only on the docs hub").
+existing worktrees:
+$(git -C "$CODE_REPO" worktree list 2>/dev/null | sed 's/^/  /')
+USAGE
+  exit 2
+fi
+
+dest="$WT_HOME/$name"
+if [ -e "$dest" ]; then echo "error: $dest already exists" >&2; exit 1; fi
+if git -C "$CODE_REPO" show-ref --verify --quiet "refs/heads/$name"; then
+  echo "error: branch '$name' already exists" >&2; exit 1
+fi
+
+mkdir -p "$WT_HOME"
+git -C "$CODE_REPO" fetch origin --quiet 2>/dev/null || true   # best-effort (a repo may have no origin)
+git -C "$CODE_REPO" worktree add -b "$name" "$dest" "$base"
+
+# Per-pack worktree setup (the anti-overwrite barrier, if the project has a
+# hub). Each pack runs in a subshell so their function definitions never collide.
+# If ANY pack fails, the worktree is rolled back: a persisted half-barriered
+# worktree would be reopened by `fleet w` with no barrier (silent fail-open).
+for a in $(fleet_agents); do
+  ( fleet_load_pack "$a" && pack_worker_setup "$dest" ) || {
+    echo "error: pack '$a' worker setup failed — rolling back the worktree" >&2
+    git -C "$CODE_REPO" worktree remove --force "$dest" \
+      || echo "WARNING: rollback failed — $dest is HALF SET UP (missing barriers); remove it by hand, do NOT reopen it" >&2
+    git -C "$CODE_REPO" branch -D "$name" >/dev/null 2>&1 || true  # fresh branch, no commits of its own
+    exit 1
+  }
+done
+
+echo "worktree ready : $dest"
+echo "branch         : $name (from $base)"
+if [ -n "$HUB" ]; then
+  echo "docs hub       : READ-ONLY (per-pack barrier, agents: $(fleet_agents))"
+else
+  echo "docs hub       : none for this project (no barrier)"
+fi
+if [ -n "${TOOLS_VENV:-}" ] && [ -d "$TOOLS_VENV" ]; then
+  echo "tooling venv   : point your editor's python to $TOOLS_VENV/bin/python"
+fi
+echo "launch         : fleet w $name   (or: fleet -a <pack> w $name)"
+echo "remove later   : fleet del $name   (refuses if uncommitted; prunes the branch if merged)"

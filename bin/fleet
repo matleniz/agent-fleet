@@ -1,0 +1,1001 @@
+#!/usr/bin/env bash
+# fleet — run a project's agent fleet: the COORDINATOR in the docs hub, and
+# WORKER sessions in code-repo worktrees. Agent-agnostic core: each CLI
+# (claude, cursor, ...) is an agent pack (packs/<name>/pack.sh); a project
+# enables packs via AGENTS="..." in its .env (first = default), pick one per
+# session with -a/--agent.
+#
+#   fleet                          launch/resume the COORDINATOR in the project's hub
+#   fleet w <name> [base]          create/reopen a WORKER worktree + launch the agent
+#   fleet --machine M ...          run the session on machine M (default: local)
+#   fleet r [w <name>|hub|del <n>] shorthand for the project's remote machine
+#   fleet machines | status        the project's machines / the whole tree (--json)
+#   fleet peek/send M <win> [text] read or type into a session's terminal
+#   fleet ls | del <n> | prune     list / guarded delete / delete all merged worktrees
+#   fleet refresh [<name>]         re-run every enabled pack's worker setup
+#   fleet add-agent <pack>         enable a pack for the project (+ refresh worktrees)
+#   fleet agents | doctor          enabled packs / per-pack install+login status
+#   fleet sync-remote [M]          ship this engine to the project's VM(s) and rebuild
+#
+# Project resolved by --project / $FLEET_PROJECT / cwd (repo, hub or worktree)
+# — no implicit default. Machines are a global pool ($FLEET_HOME/machines/*.env);
+# a project selects them with MACHINES="local vm" in its .env ("local" implicit).
+# A single legacy REMOTE_HOST (+ REMOTE_CONTAINER / REMOTE_TMUX / REMOTE_PROJECT /
+# REMOTE_ENGINE_DIR) still works, synthesized as a machine named "remote".
+# Every session runs inside tmux (local mirrors remote), so it survives
+# disconnects and is observable/controllable (fleet peek/send, fleet r broadcast).
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+. "$SELF_DIR/fleet-config.sh"
+NEW_WORKER="$SELF_DIR/new-worker"
+
+usage() {
+  cat >&2 <<'EOF'
+usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcommand>
+  (no subcommand)      launch/resume the COORDINATOR in the project's docs hub
+                       (in tmux; --machine picks where, default: local)
+  w <name> [base]      create/reopen a worker worktree + launch the agent (tmux)
+  dispatch [--model M] <name> "<task>" [base]
+                       headless worker in a detached tmux window (for an
+                       agent-coordinator): create/reopen the worktree, run the
+                       task non-interactively. --machine M dispatches on a VM
+                       (delegated to its container). --model M picks the worker
+                       model (packs that support it). Monitor: fleet attach / ls
+                       (w and dispatch refuse when the target machine is at its
+                       worker/RAM/disk limit; --force skips the guard)
+  attach               attach the local machine's tmux session (all its windows)
+  wait [<name>]        block until dispatched worker(s) finish, then report rc
+  machines             the project's machines (selected + registry pool)
+  status [--all] [--json] [--remote]  the whole tree (projects/machines/
+                       sessions/queue); --remote also gathers VM sessions via ssh
+  context [--role R] [--json] [--budget N]  what an agent auto-reads at launch
+                       (per role, with ~token estimates); --budget N exits non-zero
+                       if a role's front-load exceeds N tokens
+  peek <machine> <win>     dump a session's terminal (tmux capture-pane)
+  send <machine> <win> "<text>"  type <text>+Enter into a session
+  global [status|edit] install/rewire one per-user instructions file into every
+                       CLI (machine-wide, no project); status = report only
+  r [w <n>|hub|del <n>|broadcast "<msg>"]   shorthand for --machine <remote>:
+                       bare = attach its tmux; w/hub open there; del removes a
+                       remote worker; broadcast types into every remote window
+  ls                   list worktrees (per-pack session markers, machine header)
+  del <name>           remove a worktree (refuses if uncommitted)
+  prune                remove every worktree whose branch is merged
+  refresh [<name>]     re-run enabled packs' worker setup (one worktree, or all)
+  add-agent <pack>     enable a pack for this project, then refresh worktrees
+  agents               enabled packs for this project (default first)
+  doctor [--write-probe]  per-pack status: installed? version? logged in?
+                       --write-probe [--machine M] also does a real witness write
+                       in auto mode to prove the box can actually write
+  sync-remote [M]      ship this engine to the project's VM(s) (bundle+build)
+  init <name> [--code PATH] [...] register a NEW project. With --code: an
+                       existing repo. WITHOUT --code: scaffold from scratch
+                       (private GitHub repo + hub + github queue). fleet init -h
+Legacy aliases still work: --ls, --del <name>, -r [...].
+Companions: fleet-assess (hub maturity), fleet-queue (queue config), fleet-migrate.
+EOF
+  exit 2
+}
+
+proj="" agent="" host="" machine="" force="" sub=""
+while :; do
+  case "${1:-}" in
+    --project) proj="${2:-}"; shift 2 ;;
+    -a|--agent) agent="${2:-}"; shift 2 ;;
+    --machine) machine="${2:-}"; shift 2 ;;
+    --host) host="${2:-}"; shift 2 ;;
+    --force) force=1; shift ;;
+    -r|--remote) sub="r"; shift; break ;;
+    --ls) sub="ls"; shift; break ;;
+    --del) sub="del"; shift; break ;;
+    -h|--help) usage ;;
+    *) break ;;
+  esac
+done
+if [ -z "$sub" ]; then
+  case "${1:-}" in
+    init)  # project registration needs no resolved project — delegate now
+      shift
+      case "${1:-}" in -h|--help|"") exec "$SELF_DIR/fleet-init" ;; esac
+      exec "$SELF_DIR/fleet-init" "$@" ;;
+    ""|hub) sub="hub"; [ $# -gt 0 ] && shift ;;
+    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|peek|send|_dispatch-run)
+      sub="$1"; [ "$sub" = worker ] && sub=w; [ "$sub" = remote ] && sub=r; shift ;;
+    -*) echo "error: unknown option '$1'" >&2; exit 2 ;;
+    *)
+      echo "error: unknown subcommand '$1'" >&2
+      echo "  for a worker worktree: fleet w $1" >&2
+      echo "  (bare 'fleet' launches the coordinator in the hub; see fleet -h)" >&2
+      exit 2 ;;
+  esac
+fi
+
+# `global` is machine-wide (per-user instructions), not per-project — like
+# `init`, it resolves no project.
+if [ "$sub" != global ]; then
+  fleet_resolve_conf "$proj"
+  export FLEET_CONF   # so new-worker reuses the exact same project config
+  PROJ_NAME="$(basename "$CONF" .env)"
+  fleet_export_worker_env   # HUB/GUARD/NOTIFY/NTFY_TOPIC, read by pack_worker_setup (refresh path)
+fi
+
+# ---------- shared helpers ----------
+
+# Run one pack function in a subshell (so several packs' definitions never
+# collide): pack_in <pack> <fn> [args...]
+pack_in() { ( fleet_load_pack "$1" && shift && "$@" ); }
+
+need_code_repo() {
+  MAIN="${CODE_REPO:?set CODE_REPO in $CONF}"
+  WT_HOME="${WT_HOME:?set WT_HOME in $CONF}"
+}
+
+need_agent() {
+  agent="${agent:-$(fleet_default_agent)}"
+  fleet_agent_enabled "$agent" || {
+    echo "error: agent '$agent' is not enabled for this project (AGENTS=\"$(fleet_agents)\" in $CONF)" >&2
+    exit 2
+  }
+}
+
+launch() {  # launch the selected agent in the cwd (never returns)
+  fleet_load_pack "$agent"
+  pack_launch "${1:-}"
+}
+
+open_in() {  # cd somewhere, offer resume, launch (never returns)
+  local dest="$1"
+  cd "$dest"
+  if pack_in "$agent" pack_has_sessions "$dest"; then
+    read -rp "  (r)esume last $agent session or (n)ew? [R/n] " ans
+    case "${ans:-r}" in
+      n|N) launch ;;
+      *)   launch --resume ;;
+    esac
+  fi
+  launch
+}
+
+sessions_label() {  # per-pack session markers for a worktree, e.g. "[claude sessions] "
+  local dir="$1" a out=""
+  for a in $(fleet_agents); do
+    pack_in "$a" pack_has_sessions "$dir" && out="${out}[$a sessions] "
+  done
+  printf '%s' "$out"
+}
+
+worktree_paths() {  # every worktree under WT_HOME
+  git -C "$MAIN" worktree list --porcelain | sed -n 's/^worktree //p' \
+    | while IFS= read -r p; do case "$p" in "$WT_HOME"/*) echo "$p";; esac; done
+}
+
+# Dirty state that MATTERS: ignore the untracked per-pack barrier configs the
+# fleet itself wrote (they would otherwise mark every worker of a hub project
+# as uncommitted forever, and prune/del would never fire). The ignore list is
+# built from every available pack's pack_barrier_files declaration — ALL packs
+# on disk, not just enabled ones, so a pack disabled later still matches.
+barrier_ignore_regex() {
+  local d a f pats=""
+  for d in "$FLEET_PACKS_DIR"/*/; do
+    a="$(basename "$d")"
+    [ -f "$FLEET_PACKS_DIR/$a/pack.sh" ] || continue
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      pats="${pats}|${f//./\\.}\$"
+    done < <(pack_in "$a" pack_barrier_files 2>/dev/null || true)
+  done
+  printf '%s' "${pats#|}"
+}
+
+# real_dirty runs inside command substitutions (subshells), so its lazy
+# memoization of BARRIER_IGNORE cannot persist — callers that loop over
+# worktrees (ls, prune) prime it once in the parent shell instead.
+prime_barrier_ignore() { BARRIER_IGNORE="${BARRIER_IGNORE-$(barrier_ignore_regex)}"; }
+
+real_dirty() {
+  # -uall: expand untracked dirs to individual files. Without it git collapses
+  # e.g. ".claude/settings.local.json" + a REAL user file to one "?? .claude/"
+  # line, and filtering that line would hide the real work from del/prune.
+  if [ -z "${BARRIER_IGNORE+x}" ]; then BARRIER_IGNORE="$(barrier_ignore_regex)"; fi
+  if [ -n "$BARRIER_IGNORE" ]; then
+    git -C "$1" status --porcelain -uall 2>/dev/null \
+      | grep -vE "^\?\? ($BARRIER_IGNORE)" || true
+  else
+    git -C "$1" status --porcelain -uall 2>/dev/null || true
+  fi
+}
+
+# ---------- roles ----------
+
+cmd_hub() {
+  need_agent
+  # Not yet in a tmux window: pick the machine and (re)open the `hub` window
+  # there, then attach. session_window never returns. A local target with no hub
+  # is caught early; a remote target's hub is validated inside its container.
+  if [ -z "${FLEET_IN_WINDOW:-}" ]; then
+    target_machine
+    if [ "$M_LOCAL" = 1 ] && { [ -z "$HUB" ] || [ ! -d "$HUB" ]; }; then
+      echo "error: project '$PROJ_NAME' has no docs hub (HUB unset in $CONF)." >&2
+      echo "  There is no coordinator to launch; for a worker: fleet w <name>" >&2
+      exit 2
+    fi
+    session_window hub hub
+  fi
+  # Inside the window (on the machine where the hub lives): the real launch.
+  if [ -z "$HUB" ] || [ ! -d "$HUB" ]; then
+    echo "error: no docs hub here (HUB unset/missing in $CONF)." >&2; exit 2
+  fi
+  # Stamp this coordinator so workers it dispatches record their parent (WS3).
+  export FLEET_COORDINATOR="${FLEET_MACHINE:-local}:$PROJ_NAME:hub"
+  # Per-user global instructions for a CLI with no native global file (cursor):
+  # inject the canonical into the hub as a project rule before launching, so the
+  # coordinator session gets them too (workers get it via pack_worker_setup).
+  ( fleet_load_pack "$agent" >/dev/null 2>&1 \
+    && declare -F pack_global_inject >/dev/null && pack_global_inject "$HUB" ) || true
+  echo "[fleet] coordinator on hub: $HUB (agent: $agent, machine: ${FLEET_MACHINE:-local})"
+  open_in "$HUB"
+}
+
+cmd_worker() {
+  local name="${1:-}" base="${2:-}"
+  [ -z "$name" ] && { echo "usage: fleet w <name> [base]" >&2; exit 2; }
+  need_agent
+  # Not yet in a tmux window: pick the machine and (re)open the worker window
+  # there, then attach. The worktree itself is created inside that window, on the
+  # machine where it lives (so a remote-only project needs no local clone).
+  if [ -z "${FLEET_IN_WINDOW:-}" ]; then
+    target_machine
+    fleet_guard || exit 2   # refuse if this machine is at its worker/RAM/disk limit
+    session_window "$name" w "$name" ${base:+$base}
+  fi
+  # Inside the window: real work on this machine.
+  need_code_repo
+  local dest="$WT_HOME/$name"
+  if [ ! -d "$dest" ]; then
+    [ -z "$base" ] && base="$(pick_base "$name")"
+    "$NEW_WORKER" "$name" "$base"
+    write_worker_meta "$name" interactive
+    cd "$dest"; launch
+  fi
+  echo "[fleet] worktree $dest already exists."
+  open_in "$dest"
+}
+
+pick_base() {
+  local name="$1" default="${DEFAULT_BASE:-origin/main}"
+  git -C "$MAIN" fetch origin --quiet 2>/dev/null || true
+  local refs=()
+  mapfile -t refs < <(
+    git -C "$MAIN" for-each-ref --sort=-committerdate \
+      --format='%(refname:short)%09%(committerdate:relative)%09%(contents:subject)' \
+      refs/heads refs/remotes/origin 2>/dev/null \
+      | awk -F'\t' '$1!="origin" && $1!="origin/HEAD" && !seen[$1]++' | head -n 20
+  )
+  if [ "${#refs[@]}" -eq 0 ]; then echo "$default"; return; fi
+  {
+    echo "Base branch for new worker '$name' (most recent on top):"
+    local i=1 line rname rdate rsubj
+    for line in "${refs[@]}"; do
+      IFS=$'\t' read -r rname rdate rsubj <<<"$line"
+      printf '  %2d) %-38s %-14s %s\n' "$i" "$rname" "$rdate" "$rsubj"
+      i=$((i+1))
+    done
+    printf '  [Enter = %s]  choice (number or branch name): ' "$default"
+  } >&2
+  local ans; read -r ans || true
+  if [ -z "$ans" ]; then echo "$default"; return; fi
+  if [[ "$ans" =~ ^[0-9]+$ ]] && [ "$ans" -ge 1 ] && [ "$ans" -le "${#refs[@]}" ]; then
+    IFS=$'\t' read -r rname _ <<<"${refs[$((ans-1))]}"; echo "$rname"; return
+  fi
+  echo "$ans"
+}
+
+# ---------- machines / sessions ----------
+
+# Resolve the operation's target machine into M_* (fleet_load_machine). Honors
+# --machine, then $FLEET_MACHINE (set inside a window), else the given default
+# (usually "local"). Legacy --host retargets the ssh host for this one call.
+target_machine() {  # [default-name]
+  local name="${machine:-${FLEET_MACHINE:-${1:-local}}}"
+  if [ -n "$host" ]; then
+    # Legacy --host: retarget the ssh host for this one call. Keep a named
+    # machine's container/tmux if it resolves; otherwise use the REMOTE_* defaults.
+    if ! fleet_load_machine "$name" 2>/dev/null || [ "$M_LOCAL" = 1 ]; then
+      M_NAME="$name" M_CONTAINER="${REMOTE_CONTAINER:-fleet}" M_TMUX="${REMOTE_TMUX:-fleet}"
+      M_ENGINE="${REMOTE_ENGINE_DIR:-agent-fleet}" M_PROJECT="${REMOTE_PROJECT:-$PROJ_NAME}"
+    fi
+    M_HOST="$host"; M_LOCAL=0
+    return 0
+  fi
+  fleet_load_machine "$name" || exit 2
+}
+
+# The fleet command that runs INSIDE a tmux window on the target machine. Local
+# windows pin the resolved env (same box, correct paths); a remote window runs
+# in the container, which resolves its own config, so only --project is passed.
+# FLEET_IN_WINDOW=1 tells the inner fleet to do the real launch, not re-wrap.
+window_cmd() {  # <fleet args...>
+  if [ "$M_LOCAL" = 1 ]; then
+    printf 'env FLEET_IN_WINDOW=1 FLEET_CONF=%q FLEET_HOME=%q FLEET_PACKS_DIR=%q FLEET_MACHINE=%q fleet --project %q%s %s' \
+      "$CONF" "$FLEET_ROOT" "$FLEET_PACKS_DIR" "$M_NAME" "$M_PROJECT" "${agent:+ -a $agent}" "$*"
+  else
+    printf 'FLEET_IN_WINDOW=1 fleet --project %s%s %s' "$M_PROJECT" "${agent:+ -a $agent}" "$*"
+  fi
+}
+
+# Emit a shell script that hands THIS terminal a private, grouped "view" of the
+# machine session <sess>, focused on <win> (empty = whole session, any window).
+# Why a view and not a direct attach: tmux shares one active window across every
+# client of a session, so attaching a worker to $M_TMUX would yank a coordinator
+# already viewing another window of it onto the worker's pane. A grouped session
+# (`new-session -t`) shares the window LIST — new workers still appear — but keeps
+# its own active window, so clients never drag each other. The view self-destructs
+# when this client detaches (client-detached hook) and is named fv-* so the
+# resource guard's `^fleet` window count never double-counts its shared windows.
+# The same snippet runs local (bash -c) or remote (base64'd through ssh+docker);
+# $$ and $TMUX resolve on whichever shell runs it. The machine session itself is
+# thus never attached by a human — which is what makes the no-drag guarantee hold.
+view_snippet() {  # <sess> <win-or-empty>
+  local sess="$1" win="$2" sel=""
+  [ -n "$win" ] && sel="tmux select-window -t \"\$V:$win\" 2>/dev/null || true"
+  cat <<SNIP
+if [ -n "\${TMUX:-}" ] && [ -n "$win" ] && tmux select-window -t "$win" 2>/dev/null; then exit 0; fi
+V="fv-$sess-${win:-all}-\$\$"
+tmux kill-session -t "\$V" 2>/dev/null || true
+tmux new-session -d -t "$sess" -s "\$V"
+$sel
+tmux set-hook -t "\$V" client-detached "kill-session -t \$V"
+if [ -n "\${TMUX:-}" ]; then exec tmux switch-client -t "\$V"; else exec tmux attach -t "\$V"; fi
+SNIP
+}
+
+# Open (or reuse) window <win> on the target machine running the given fleet
+# subcommand, then attach through a private view. Local = plain tmux; remote =
+# ssh + docker exec tmux (the view snippet is base64'd so its quotes survive the
+# ssh+docker nesting, same transport as guard_probe).
+session_window() {  # <win> <fleet args...>
+  local win="$1"; shift
+  local inner; inner="$(window_cmd "$@")"
+  if [ "$M_LOCAL" = 1 ]; then
+    command -v tmux >/dev/null || { echo "error: tmux not installed (needed for sessions)" >&2; exit 2; }
+    tmux has-session -t "$M_TMUX" 2>/dev/null || tmux new-session -d -s "$M_TMUX" -n _home
+    tmux select-window -t "$M_TMUX:$win" 2>/dev/null \
+      || tmux new-window -d -t "$M_TMUX" -n "$win" "$inner; exec bash"
+    local snip; snip="$(view_snippet "$M_TMUX" "$win")"
+    exec bash -c "$snip"
+  else
+    version_preflight   # non-fatal warning if the VM engine lags the local one
+    local create b64
+    create="tmux has-session -t $M_TMUX 2>/dev/null || tmux new-session -d -s $M_TMUX -n _home; tmux select-window -t $M_TMUX:$win 2>/dev/null || tmux new-window -d -t $M_TMUX -n $win \"$inner; exec bash\""
+    b64="$(view_snippet "$M_TMUX" "$win" | base64 | tr -d '\n')"
+    exec ssh -t "$M_HOST" "docker exec -it $M_CONTAINER bash -lc '$create; echo $b64 | base64 -d | bash'"
+  fi
+}
+
+# Attach the target machine's whole tmux session (all its windows), through a
+# private view so two attaches never drag each other's active window.
+session_attach() {
+  if [ "$M_LOCAL" = 1 ]; then
+    command -v tmux >/dev/null || { echo "error: tmux not installed" >&2; exit 2; }
+    tmux has-session -t "$M_TMUX" 2>/dev/null \
+      || { echo "no session '$M_TMUX' yet on '$M_NAME' (launch: fleet, or fleet w <name>)" >&2; exit 1; }
+    local snip; snip="$(view_snippet "$M_TMUX" "")"
+    exec bash -c "$snip"
+  else
+    local b64; b64="$(view_snippet "$M_TMUX" "" | base64 | tr -d '\n')"
+    exec ssh -t "$M_HOST" "docker exec -it $M_CONTAINER bash -lc 'tmux has-session -t $M_TMUX 2>/dev/null || tmux new-session -d -s $M_TMUX -n _home; echo $b64 | base64 -d | bash'"
+  fi
+}
+
+# `fleet r` — shorthand for the project's remote machine (first non-local, or a
+# legacy REMOTE_HOST synthesized as "remote"). --machine overrides the pick.
+cmd_remote() {
+  local rm; rm="${machine:-$(fleet_remote_machine || true)}"
+  [ -z "$rm" ] && [ -n "$host" ] && rm=remote   # legacy `fleet --host vm r`
+  [ -n "$rm" ] || {
+    echo "error: this project has no remote machine (add one to MACHINES or set" >&2
+    echo "  REMOTE_HOST in $CONF, or pass --machine <name> / --host <vm>)." >&2
+    exit 2
+  }
+  machine="$rm"; target_machine
+  case "${1:-}" in
+    "")  session_attach ;;
+    hub) need_agent; session_window hub hub ;;
+    w|worker)
+      local name="${2:-}" base="${3:-}"
+      [ -z "$name" ] && { echo "usage: fleet r w <name> [base]" >&2; exit 2; }
+      need_agent; session_window "$name" w "$name" ${base:+$base} ;;
+    del)
+      local name="${2:-}"
+      [ -z "$name" ] && { echo "usage: fleet r del <name>" >&2; exit 2; }
+      [ "$M_LOCAL" = 1 ] && { echo "error: 'r del' targets a remote machine" >&2; exit 2; }
+      ssh "$M_HOST" "docker exec $M_CONTAINER tmux kill-window -t $M_TMUX:$name 2>/dev/null; docker exec $M_CONTAINER bash -lc 'fleet --project $M_PROJECT del $name'" ;;
+    broadcast)
+      shift
+      local text="$*"
+      [ -z "$text" ] && { echo "usage: fleet r broadcast \"<message>\"" >&2; exit 2; }
+      case "$text" in *"'"*) echo "error: no single quotes in a broadcast message" >&2; exit 2;; esac
+      [ "$M_LOCAL" = 1 ] && { echo "error: broadcast targets a remote machine" >&2; exit 2; }
+      # Send the message to EVERY window of the remote tmux (uzi's broadcast
+      # pattern): "commit and stop", "rebase on main", ...
+      ssh "$M_HOST" "docker exec $M_CONTAINER bash -lc 'for w in \$(tmux list-windows -t $M_TMUX -F \"#{window_index}:#{window_name}\" 2>/dev/null); do tmux send-keys -t $M_TMUX:\${w%%:*} \"$text\" Enter && echo \"sent to \$w\"; done'" ;;
+    *)
+      echo "error: unknown remote subcommand '${1}'" >&2
+      echo "  fleet r                    attach the machine's tmux" >&2
+      echo "  fleet r w <name>           remote worker    fleet r hub   remote coordinator" >&2
+      echo "  fleet r del <name>         delete a remote worker" >&2
+      echo "  fleet r broadcast \"<msg>\"  type <msg>+Enter in every remote window" >&2
+      exit 2 ;;
+  esac
+}
+
+# ---------- management ----------
+
+cmd_ls() {
+  need_code_repo
+  # Per-invocation cache dir: packs whose pack_has_sessions shells out to a
+  # slow CLI (e.g. a full session list) may memoize in here across worktrees.
+  FLEET_CACHE_DIR="$(mktemp -d)"; export FLEET_CACHE_DIR
+  trap 'rm -rf "$FLEET_CACHE_DIR"' EXIT
+  prime_barrier_ignore
+  echo "worktrees [$PROJ_NAME] — 'fleet w NAME' to (re)open, bare 'fleet' for the coordinator:"
+  local m
+  for m in $(fleet_machines); do
+    if fleet_load_machine "$m" 2>/dev/null; then
+      if [ "$M_LOCAL" = 1 ]; then
+        printf '  machine: %-10s local (tmux %s) — fleet / fleet w <name>\n' "$m" "$M_TMUX"
+      else
+        printf '  machine: %-10s %s (container %s, tmux %s) — fleet --machine %s ...  (fleet r)\n' \
+          "$m" "$M_HOST" "$M_CONTAINER" "$M_TMUX" "$m"
+      fi
+    else
+      printf '  machine: %-10s (unresolved — see fleet machines)\n' "$m"
+    fi
+  done
+  printf '  %-18s %-26s %-9s %s\n' "NAME" "BRANCH" "SHA" "STATE / PATH"
+  local path="" head="" branch=""
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*) path="${line#worktree }" ;;
+      "HEAD "*)     head="${line#HEAD }" ;;
+      "branch "*)   branch="${line#branch refs/heads/}" ;;
+      "detached")   branch="(detached)" ;;
+      "")
+        [ -z "$path" ] && continue
+        local name state
+        if [ "$path" = "$MAIN" ]; then name="(base repo)"
+        elif [ "${path#$WT_HOME/}" != "$path" ]; then name="${path#$WT_HOME/}"
+        else name="$(basename "$path")"; fi
+        state=""
+        if [ "$path" != "$MAIN" ]; then
+          [ -n "$(real_dirty "$path")" ] && state="[UNCOMMITTED] "
+          state="${state}$(sessions_label "$path")"
+          state="${state}$(dispatch_status_label "$name")"
+        fi
+        printf '  %-18s %-26s %-9s %s%s\n' "$name" "${branch:-?}" "${head:0:7}" "$state" "$path"
+        path=""; head=""; branch=""
+        ;;
+    esac
+  done < <(git -C "$MAIN" worktree list --porcelain; echo)
+}
+
+cmd_del() {
+  local name="${1:-}"
+  [ -z "$name" ] && { echo "usage: fleet del <name>" >&2; exit 2; }
+  need_code_repo
+  local dest="$WT_HOME/$name"
+  [ -d "$dest" ] || { echo "error: worktree $dest not found" >&2; exit 1; }
+  local dirty; dirty="$(real_dirty "$dest")"
+  if [ -n "$dirty" ]; then
+    echo "REFUSED: $dest has uncommitted changes:" >&2
+    echo "$dirty" >&2
+    echo "Commit/merge (or explicitly discard) before deleting." >&2
+    exit 1
+  fi
+  git -C "$MAIN" worktree remove --force "$dest"   # --force: only fleet-written barrier files remain
+  echo "[fleet] worktree removed: $dest"
+  if git -C "$MAIN" branch -d "$name" 2>/dev/null; then
+    echo "[fleet] branch removed: $name (merged)"
+  else
+    echo "[fleet] branch '$name' KEPT: unmerged commits." >&2
+    echo "  To force: git -C $MAIN branch -D $name" >&2
+  fi
+}
+
+cmd_prune() {
+  need_code_repo
+  local base="${DEFAULT_BASE:-origin/main}"
+  git -C "$MAIN" fetch origin --quiet 2>/dev/null || true
+  prime_barrier_ignore
+  local pruned=0 kept=0 p name branch paths=()
+  mapfile -t paths < <(worktree_paths)
+  for p in "${paths[@]}"; do
+    name="$(basename "$p")"
+    branch="$(git -C "$p" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    if [ -n "$(real_dirty "$p")" ]; then
+      echo "  keep  $name (uncommitted changes)"; kept=$((kept+1)); continue
+    fi
+    if ! git -C "$MAIN" merge-base --is-ancestor "$(git -C "$p" rev-parse HEAD)" "$base" 2>/dev/null; then
+      echo "  keep  $name (branch '$branch' not merged into $base)"; kept=$((kept+1)); continue
+    fi
+    git -C "$MAIN" worktree remove --force "$p"   # --force: only fleet-written barrier files remain
+    git -C "$MAIN" branch -d "$name" 2>/dev/null || true
+    echo "  prune $name (merged into $base)"; pruned=$((pruned+1))
+  done
+  echo "[fleet] prune: $pruned removed, $kept kept."
+}
+
+cmd_refresh() {
+  need_code_repo
+  local targets=() a p
+  if [ -n "${1:-}" ]; then
+    [ -d "$WT_HOME/$1" ] || { echo "error: worktree $WT_HOME/$1 not found" >&2; exit 1; }
+    targets=("$WT_HOME/$1")
+  else
+    mapfile -t targets < <(worktree_paths)
+  fi
+  [ "${#targets[@]}" -eq 0 ] && { echo "[fleet] refresh: no worktrees."; return; }
+  for p in "${targets[@]}"; do
+    for a in $(fleet_agents); do
+      pack_in "$a" pack_worker_setup "$p" \
+        || { echo "error: pack '$a' setup failed on $p (see above)" >&2; exit 1; }
+    done
+    echo "  refreshed $(basename "$p") (packs: $(fleet_agents))"
+  done
+}
+
+cmd_add_agent() {
+  local pack="${1:-}"
+  [ -z "$pack" ] && { echo "usage: fleet add-agent <pack>" >&2; exit 2; }
+  [ -f "$FLEET_PACKS_DIR/$pack/pack.sh" ] || {
+    echo "error: unknown pack '$pack'; available:" >&2
+    ls "$FLEET_PACKS_DIR" | sed 's/^/  /' >&2
+    exit 2
+  }
+  if fleet_agent_enabled "$pack"; then
+    echo "[fleet] '$pack' already enabled (AGENTS=\"$(fleet_agents)\")."
+  else
+    local new_agents="$(fleet_agents) $pack"
+    if grep -q '^AGENTS=' "$CONF"; then
+      sed -i "s|^AGENTS=.*|AGENTS=\"$new_agents\"|" "$CONF"
+    else
+      printf 'AGENTS="%s"\n' "$new_agents" >> "$CONF"
+    fi
+    AGENTS="$new_agents"
+    echo "[fleet] AGENTS=\"$new_agents\" written to $CONF"
+  fi
+  if [ -n "${CODE_REPO:-}" ] && [ -n "${WT_HOME:-}" ]; then
+    cmd_refresh
+  fi
+}
+
+cmd_agents() {
+  echo "project : $PROJ_NAME"
+  local a first=1
+  for a in $(fleet_agents); do
+    if [ "$first" = 1 ]; then echo "  $a (default)"; first=0; else echo "  $a"; fi
+  done
+  echo "(fleet doctor for install/login status; fleet add-agent <pack> to enable one)"
+}
+
+cmd_doctor() {
+  if [ "${1:-}" = --write-probe ]; then
+    target_machine local
+    doctor_write_probe
+    return
+  fi
+  local a
+  echo "packs enabled for '$PROJ_NAME':"
+  for a in $(fleet_agents); do
+    printf '  %-12s ' "$a"
+    ( fleet_load_pack "$a" >/dev/null 2>&1   # exits the subshell on a broken pack — caught below
+      if declare -F pack_doctor >/dev/null; then pack_doctor
+      else echo "ok (no doctor implemented)"; fi
+    ) || echo "PACK BROKEN or pack_doctor errored"   # one broken pack/CLI must not abort the report
+  done
+  local canon; canon="$(global_canon)"
+  if [ -e "$canon" ]; then echo "global instructions: $canon (fleet global to re-wire, fleet global status to check)"
+  else echo "global instructions: none yet — run 'fleet global' to install one file for every CLI"; fi
+}
+
+# fleet doctor --write-probe [--machine M]: prove the box can actually WRITE in
+# --permission-mode auto, on demand. Catches the silent fail-open (org disables
+# bypass -> every write auto-denied, agent exits rc=0 having written nothing) that
+# a plain doctor misses. Runs one tiny headless turn per pack in a throwaway dir.
+# Costs a few tokens, so it is opt-in, never part of a bare `fleet doctor`.
+doctor_write_probe() {
+  if [ "$M_LOCAL" = 1 ]; then
+    echo "write-probe on '$M_NAME' (local):"
+    local a d; d="$(mktemp -d "${TMPDIR:-/tmp}/fleet-probe.XXXXXX")"
+    for a in $(fleet_agents); do
+      printf '  %-12s ' "$a"
+      ( fleet_load_pack "$a" >/dev/null 2>&1
+        if declare -F pack_doctor >/dev/null; then ( cd "$d" && pack_doctor probe )
+        else echo "no probe implemented"; fi ) || echo "PACK BROKEN or probe errored"
+    done
+    rm -rf "$d"
+  else
+    version_preflight
+    echo "write-probe on '$M_NAME' ($M_HOST:$M_CONTAINER):"
+    # Reuse the local path inside the container: it resolves 'local' there.
+    ssh "$M_HOST" "docker exec $M_CONTAINER bash -lc 'fleet --project $M_PROJECT doctor --write-probe'" \
+      || echo "  remote probe failed (ssh/docker/login?)"
+  fi
+}
+
+# Warn (non-fatal) if the target machine's baked engine lags the local one, so a
+# stale VM does not silently run old dispatch/barrier code. Best-effort: any probe
+# failure is silent and never blocks the real command. Skips local. Called by the
+# work-spawning paths only (session_window remote, remote dispatch, remote probe),
+# not by every `fleet r`/status, to avoid an extra ssh round-trip on read paths.
+version_preflight() {
+  [ "${M_LOCAL:-0}" = 1 ] && return 0
+  local engine_dir local_sha remote_sha
+  engine_dir="$(cd "$SELF_DIR/.." && pwd)"
+  local_sha="$(git -C "$engine_dir" rev-parse --short HEAD 2>/dev/null)" || return 0
+  [ -n "$local_sha" ] || return 0
+  remote_sha="$(ssh "$M_HOST" "docker exec $M_CONTAINER cat /opt/agent-fleet/.engine-sha 2>/dev/null" 2>/dev/null | tr -d '[:space:]')" || return 0
+  [ -n "$remote_sha" ] && [ "$remote_sha" != unknown ] || return 0
+  if [ "$remote_sha" != "$local_sha" ]; then
+    echo "[fleet] WARNING: machine '$M_NAME' runs engine $remote_sha, local HEAD is $local_sha." >&2
+    echo "        The VM may lack recent fixes/commands — sync it: fleet sync-remote $M_NAME" >&2
+  fi
+}
+
+cmd_sync_remote() {  # fleet sync-remote [machine] — ship the engine to the VM(s)
+  local only="${1:-${machine:-}}"
+  local engine_dir; engine_dir="$(cd "$SELF_DIR/.." && pwd)"
+  local targets=() m
+  if [ -n "$only" ]; then targets=("$only")
+  else mapfile -t targets < <(fleet_machines | tr ' ' '\n' | grep -vx local); fi
+  [ "${#targets[@]}" -eq 0 ] && { echo "[fleet] sync-remote: no remote machines for '$PROJ_NAME'." >&2; exit 1; }
+  echo "[fleet] sync-remote -> ${targets[*]}: ship engine (main) + rebuild image."
+  echo "        WARNING: each rebuild recreates that container — its tmux session"
+  echo "        and any running remote agents will be stopped."
+  read -rp "  continue? [y/N] " ans
+  case "${ans:-n}" in y|Y) ;; *) echo "aborted."; exit 1;; esac
+  local bundle; bundle="$(mktemp --suffix=.bundle)"
+  git -C "$engine_dir" bundle create "$bundle" main >/dev/null   # stderr stays visible: a bundle failure must not abort silently
+  local short; short="$(git -C "$engine_dir" rev-parse --short main)"
+  for m in "${targets[@]}"; do
+    fleet_load_machine "$m" 2>/dev/null || { echo "  skip $m (unknown machine)" >&2; continue; }
+    [ "$M_LOCAL" = 1 ] && { echo "  skip $m (local)"; continue; }
+    echo "[fleet] $m: $engine_dir (main) -> $M_HOST:~/$M_ENGINE + image rebuild"
+    scp -q "$bundle" "$M_HOST:/tmp/fleet-engine.bundle" || { echo "  scp failed for $m" >&2; continue; }
+    # ENGINE_SHA stamps the git SHA into the rebuilt image (/opt/agent-fleet/
+    # .engine-sha), so version_preflight can later flag a VM that lags the laptop.
+    ssh "$M_HOST" "cd ~/$M_ENGINE && git pull -q /tmp/fleet-engine.bundle main && ENGINE_SHA=$short docker compose -f deploy/docker-compose.yml up -d --build" \
+      && echo "[fleet] $m updated ($short)." || echo "  remote update failed for $m" >&2
+  done
+  rm -f "$bundle"
+}
+
+# ---------- headless dispatch (detached tmux) ----------
+
+# Local dispatch tmux session name (per project so workers of different projects
+# do not share windows). Override with LOCAL_TMUX in the project .env.
+dispatch_tmux() { echo "${LOCAL_TMUX:-fleet-$PROJ_NAME}"; }
+
+# Per-project dispatch state: one <name>.status file per worker holding "running"
+# or "done rc=N", plus an events.log history. This is how a coordinator (itself
+# an agent, so it cannot receive an ntfy push) learns a worker finished: it reads
+# `fleet ls` / `fleet wait`. ntfy stays the human's phone ping.
+dispatch_state_dir() { echo "$FLEET_ROOT/dispatch/$PROJ_NAME"; }
+
+dispatch_status_label() {  # <worker-name> -> "[dispatch: running] " / "[dispatch: done rc=0] "
+  local f; f="$(dispatch_state_dir)/$1.status"
+  [ -f "$f" ] || return 0
+  printf '[dispatch: %s] ' "$(cat "$f" 2>/dev/null)"
+}
+
+# Provenance sidecar (WS3): record which coordinator spawned a worker and how.
+# Read by `fleet status` to rebuild the coordinator -> workers tree. A worker
+# with no parent (a bare `fleet w` started by a human) is "independent".
+write_worker_meta() {  # <worker-name> <mode: dispatch|interactive>
+  local name="$1" mode="$2" sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
+  {
+    printf 'machine=%s\n' "${FLEET_MACHINE:-local}"
+    printf 'parent=%s\n'  "${FLEET_COORDINATOR:-}"
+    printf 'mode=%s\n'    "$mode"
+    printf 'created=%s\n' "$(date -u +%FT%TZ 2>/dev/null || echo '')"
+  } > "$sdir/$name.meta"
+}
+
+cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [base]
+  local model="" taskfile_in=""
+  # Leading flags (dispatch's own; the global --machine is already parsed).
+  # --task-file is the transport for remote dispatch (task shipped as a file so
+  # multi-line prompts never fight ssh->docker->bash quoting); it is consumed
+  # (deleted) after reading, same as _dispatch-run's taskfile.
+  while :; do
+    case "${1:-}" in
+      --model)     model="${2:-}"; shift 2 || true ;;
+      --task-file) taskfile_in="${2:-}"; shift 2 || true ;;
+      *) break ;;
+    esac
+  done
+  local name="${1:-}"; shift || true
+  local task=""
+  if [ -n "$taskfile_in" ]; then
+    task="$(cat "$taskfile_in" 2>/dev/null)"; rm -f "$taskfile_in"
+  else
+    task="${1:-}"; shift || true
+  fi
+  local base="${1:-}"
+  [ -z "$name" ] || [ -z "$task" ] && { echo "usage: fleet [--machine M] dispatch [--model M] <name> \"<task>\" [base]" >&2; exit 2; }
+  need_agent
+  # Resolve the target machine (honors --machine); dispatch defaults to local.
+  target_machine local
+  # --- remote dispatch: delegate to the container's OWN fleet ---------------
+  # The dispatch state (worktree, .status, meta, tmux window) must live on the
+  # machine where the worker runs, and the resource guard must check THAT box.
+  # So for a remote target we do not open a local window: we run the container's
+  # `fleet dispatch`, which then does a normal LOCAL dispatch there. Same
+  # ssh+docker+base64 transport as session_window.
+  if [ "$M_LOCAL" != 1 ]; then
+    command -v ssh >/dev/null || { echo "error: remote dispatch needs ssh" >&2; exit 2; }
+    version_preflight   # non-fatal warning if the VM engine lags the local one
+    local b64; b64="$(printf '%s' "$task" | base64 | tr -d '\n')"
+    local inner="tf=\$(mktemp); echo $b64 | base64 -d > \$tf; fleet --project $M_PROJECT${agent:+ -a $agent} dispatch${model:+ --model $model} --task-file \$tf $name${base:+ $base}"
+    ssh "$M_HOST" "docker exec $M_CONTAINER bash -lc '$inner'"
+    return $?
+  fi
+  # --- local dispatch -------------------------------------------------------
+  need_code_repo
+  # Guard rail: check this box's limits before spawning another worker (this is
+  # the fan-out path that OOMs a box).
+  fleet_guard || exit 2
+  command -v tmux >/dev/null || { echo "error: dispatch needs tmux (detached worker window)" >&2; exit 2; }
+  # The pack must support a headless launch (all bundled packs do).
+  fleet_load_pack "$agent"
+  declare -F pack_launch_headless >/dev/null \
+    || { echo "error: pack '$agent' has no headless mode (pack_launch_headless)" >&2; exit 2; }
+  local dest="$WT_HOME/$name"
+  if [ ! -d "$dest" ]; then
+    "$NEW_WORKER" "$name" "${base:-${DEFAULT_BASE:-origin/main}}" || exit 1
+  fi
+  write_worker_meta "$name" dispatch   # provenance: parent coordinator + mode (WS3)
+  # Pass the task via a file, not the command line: prompts are multi-line and
+  # would otherwise fight tmux/shell quoting. _dispatch-run reads then deletes it.
+  local taskfile; taskfile="$(mktemp "${TMPDIR:-/tmp}/fleet-task.XXXXXX")"
+  printf '%s\n' "$task" > "$taskfile"
+  local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
+  printf 'running' > "$sdir/$name.status"   # _dispatch-run flips this to "done rc=N"
+  local LT; LT="$(dispatch_tmux)"
+  # NOT `exec fleet`: control must return after the worker so _dispatch-run can
+  # record completion + notify, and the window is kept for inspection.
+  # Pin the env IN the command: a persistent tmux server keeps a stale
+  # environment that new windows inherit, and an inherited FLEET_CONF would
+  # override --project (resolution prefers FLEET_CONF), sending the worker to the
+  # wrong project. `env VAR=val` wins over whatever the server carries.
+  # FLEET_MODEL (when --model is given) rides the same way to pack_launch_headless.
+  local run="env FLEET_CONF='$CONF' FLEET_HOME='$FLEET_ROOT' FLEET_PACKS_DIR='$FLEET_PACKS_DIR'${model:+ FLEET_MODEL='$model'} fleet -a $agent _dispatch-run $name $taskfile"
+  tmux has-session -t "$LT" 2>/dev/null || tmux new-session -d -s "$LT" -n _home
+  tmux kill-window -t "$LT:$name" 2>/dev/null || true   # replace any stale window
+  tmux new-window -t "$LT" -n "$name" \
+    "$run; echo; echo '[worker $name exited — window kept for inspection; Ctrl-b & to close]'; exec bash"
+  echo "dispatched: worker '$name' ($agent, headless${model:+, model=$model}) -> tmux $LT:$name"
+  echo "  monitor : fleet ls   ·   watch: fleet attach   ·   block: fleet wait $name"
+}
+
+cmd_dispatch_run() {  # internal: foreground headless launch inside a tmux window
+  local name="${1:-}" taskfile="${2:-}"
+  [ -z "$name" ] || [ -z "$taskfile" ] && { echo "error: _dispatch-run <name> <taskfile>" >&2; exit 2; }
+  need_code_repo; need_agent
+  local dest="$WT_HOME/$name"
+  [ -d "$dest" ] || { echo "error: no worktree $dest" >&2; exit 1; }
+  local task; task="$(cat "$taskfile" 2>/dev/null)"; rm -f "$taskfile"
+  [ -n "$task" ] || { echo "error: empty task" >&2; exit 1; }
+  # Standard worker preamble so every dispatched worker gets consistent framing;
+  # the coordinator's task follows. The barrier is mechanical regardless.
+  local preamble="You are a code WORKER in the git worktree $dest (branch $name)."
+  [ -n "${HUB:-}" ] && preamble="$preamble The docs hub at $HUB is READ-ONLY: do not edit it; if a hub doc needs changing, note it for the coordinator (do not write there)."
+  preamble="$preamble Do the task, run the tests, commit on this branch. Task follows."
+  fleet_load_pack "$agent"
+  cd "$dest"
+  # Run the worker in a subshell so pack_launch_headless's exec is contained and
+  # control returns here to record completion (the "worker finished" signal).
+  # FLEET_MODEL (set by `dispatch --model`) is passed as $2; packs that support a
+  # per-launch model use it, others ignore the extra arg.
+  ( pack_launch_headless "$preamble
+
+$task" "${FLEET_MODEL:-}" )
+  local rc=$?
+  local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
+  printf 'done rc=%s' "$rc" > "$sdir/$name.status"
+  printf '%s %s done rc=%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$rc" >> "$sdir/events.log"
+  # Human's phone ping (best effort), same channel as the pack Stop hooks.
+  [ -n "${NTFY_TOPIC:-}" ] && "$NOTIFY" "$NTFY_TOPIC" "$name" "done rc=$rc" >/dev/null 2>&1
+  echo "[fleet] worker '$name' finished (rc=$rc) — recorded for the coordinator (fleet ls / fleet wait)"
+  return "$rc"
+}
+
+cmd_attach() {  # attach the local machine's tmux session (coordinator + workers)
+  machine=local; target_machine
+  session_attach
+}
+
+cmd_wait() {  # fleet wait [<name>] — block until dispatched worker(s) finish, then report
+  local target="${1:-}" dir; dir="$(dispatch_state_dir)"
+  [ -d "$dir" ] || { echo "no dispatched workers for '$PROJ_NAME'." >&2; return 0; }
+  if [ -n "$target" ] && [ ! -f "$dir/$target.status" ]; then
+    echo "no dispatched worker '$target' for '$PROJ_NAME'." >&2; return 2
+  fi
+  local f n pending
+  while :; do
+    pending=0
+    for f in "$dir"/*.status; do
+      [ -e "$f" ] || continue
+      n="$(basename "$f" .status)"
+      [ -n "$target" ] && [ "$n" != "$target" ] && continue
+      case "$(cat "$f" 2>/dev/null)" in running*) pending=1 ;; esac
+    done
+    [ "$pending" -eq 0 ] && break
+    sleep "${FLEET_WAIT_POLL:-3}"
+  done
+  local worst=0
+  for f in "$dir"/*.status; do
+    [ -e "$f" ] || continue
+    n="$(basename "$f" .status)"
+    [ -n "$target" ] && [ "$n" != "$target" ] && continue
+    local s; s="$(cat "$f" 2>/dev/null)"
+    printf '  %-18s %s\n' "$n" "$s"
+    case "$s" in done\ rc=0) ;; done\ rc=*) worst=1 ;; esac
+  done
+  return "$worst"
+}
+
+# ---------- global (per-user instructions) ----------
+# global_canon() is defined in fleet-config.sh (shared with pack_worker_setup).
+
+# Seed the canonical file if absent. If ~/.claude/CLAUDE.md already holds user
+# instructions (and is not yet the @import bridge), MIGRATE it: back it up, make
+# it the canonical seed, and empty it so the claude pack writes the import.
+global_ensure_canon() {
+  local canon="$1" claudemd="$HOME/.claude/CLAUDE.md" imp="@$1" tpl
+  mkdir -p "$(dirname "$canon")"
+  [ -e "$canon" ] && return 0
+  if [ -s "$claudemd" ] && ! grep -qxF "$imp" "$claudemd"; then
+    cp "$claudemd" "$claudemd.bak"
+    cp "$claudemd" "$canon"
+    : > "$claudemd"
+    echo "[fleet] migrated $claudemd -> $canon (backup: $claudemd.bak)"
+  else
+    tpl="$SELF_DIR/../templates/global-AGENTS.md"
+    if [ -f "$tpl" ]; then cp "$tpl" "$canon"; else printf '# global agent instructions\n' > "$canon"; fi
+    echo "[fleet] seeded $canon"
+  fi
+}
+
+# Per-pack report/wire. mode=install wires; mode=status is read-only. A pack with
+# no pack_global_setup (cursor, antigravity) prints "unsupported".
+global_report() {
+  local mode="$1" canon="$2" a status
+  echo "global instructions: $canon"
+  for a in $(ls "$FLEET_PACKS_DIR" 2>/dev/null); do
+    [ -f "$FLEET_PACKS_DIR/$a/pack.sh" ] || continue
+    status="$( ( fleet_load_pack "$a" >/dev/null 2>&1 \
+                 && declare -F pack_global_setup >/dev/null \
+                 && pack_global_setup "$canon" "$mode" ) 2>/dev/null || true )"
+    printf '  %-12s %s\n' "$a" "${status:-unsupported}"
+  done
+}
+
+cmd_global() {  # fleet global [install|status|edit]
+  local canon; canon="$(global_canon)"
+  case "${1:-install}" in
+    status)      global_report status "$canon" ;;
+    edit)        [ -e "$canon" ] || global_ensure_canon "$canon"; exec "${EDITOR:-vi}" "$canon" ;;
+    install|"")  global_ensure_canon "$canon"; global_report install "$canon"
+                 echo "edit it:  fleet global edit   ·   re-wire after enabling a pack:  fleet global" ;;
+    *)           echo "usage: fleet global [install|status|edit]" >&2; exit 2 ;;
+  esac
+}
+
+# ---------- machines / status / peek / send ----------
+
+cmd_machines() {
+  if [ "${1:-}" = add ]; then
+    shift
+    local mname="${1:-}" mhost="${2:-}" mcont="${3:-}" mtmux="${4:-}"
+    { [ -z "$mname" ] || [ -z "$mhost" ]; } && {
+      echo "usage: fleet machines add <name> <ssh-host> [container] [tmux]" >&2
+      echo "  writes $FLEET_MACHINES/<name>.env; add it to a project with MACHINES=" >&2
+      exit 2; }
+    mkdir -p "$FLEET_MACHINES"
+    local f="$FLEET_MACHINES/$mname.env"
+    [ -e "$f" ] && { echo "error: machine '$mname' already exists ($f)" >&2; exit 1; }
+    {
+      echo "# fleet machine '$mname' (a VM running the deploy/ container)."
+      echo "MACHINE_HOST=\"$mhost\""
+      echo "MACHINE_CONTAINER=\"${mcont:-fleet}\""
+      echo "MACHINE_TMUX=\"${mtmux:-fleet}\""
+      echo "MACHINE_ENGINE_DIR=\"agent-fleet\""
+      echo "# MACHINE_PROJECT=\"<name on that box, if different from the project>\""
+    } > "$f"
+    echo "[fleet] wrote $f — enable it per project with MACHINES=\"local $mname\" (or fleet-init --machine)"
+    return 0
+  fi
+  echo "project : $PROJ_NAME"
+  echo "selected: $(fleet_machines)"
+  local m
+  for m in $(fleet_machines); do
+    if fleet_load_machine "$m" 2>/dev/null; then
+      if [ "$M_LOCAL" = 1 ]; then
+        printf '  %-12s local (tmux %s)\n' "$m" "$M_TMUX"
+      else
+        printf '  %-12s %s (container %s, tmux %s, engine ~/%s, project %s)\n' \
+          "$m" "$M_HOST" "$M_CONTAINER" "$M_TMUX" "$M_ENGINE" "$M_PROJECT"
+      fi
+    else
+      printf '  %-12s (unresolved)\n' "$m"
+    fi
+  done
+  if ls "$FLEET_MACHINES"/*.env >/dev/null 2>&1; then
+    echo "registry pool ($FLEET_MACHINES):"
+    ls "$FLEET_MACHINES"/*.env 2>/dev/null | sed 's#.*/##; s#\.env$##; s#^#  #'
+  else
+    echo "registry pool: empty — add one at $FLEET_MACHINES/<name>.env (template: templates/machine.env)"
+  fi
+}
+
+cmd_peek() {  # fleet peek <machine> <window> — dump a session's terminal
+  local mname="${1:-}" win="${2:-}"
+  { [ -z "$mname" ] || [ -z "$win" ]; } && { echo "usage: fleet peek <machine> <window>" >&2; exit 2; }
+  fleet_load_machine "$mname" || exit 2
+  if [ "$M_LOCAL" = 1 ]; then
+    tmux capture-pane -p -t "$M_TMUX:$win" 2>/dev/null \
+      || { echo "error: no window '$win' in local tmux '$M_TMUX'" >&2; exit 1; }
+  else
+    ssh "$M_HOST" "docker exec $M_CONTAINER tmux capture-pane -p -t $M_TMUX:$win" 2>/dev/null \
+      || { echo "error: could not capture $mname:$win" >&2; exit 1; }
+  fi
+}
+
+cmd_send() {  # fleet send <machine> <window> "<text>" — type text+Enter
+  local mname="${1:-}" win="${2:-}"; shift 2 2>/dev/null || true
+  local text="$*"
+  { [ -z "$mname" ] || [ -z "$win" ] || [ -z "$text" ]; } && { echo "usage: fleet send <machine> <window> \"<text>\"" >&2; exit 2; }
+  case "$text" in *"'"*) echo "error: no single quotes in send text (tmux/ssh quoting)" >&2; exit 2;; esac
+  fleet_load_machine "$mname" || exit 2
+  if [ "$M_LOCAL" = 1 ]; then
+    tmux send-keys -t "$M_TMUX:$win" "$text" Enter && echo "sent to $mname:$win"
+  else
+    ssh "$M_HOST" "docker exec $M_CONTAINER tmux send-keys -t $M_TMUX:$win \"$text\" Enter" && echo "sent to $mname:$win"
+  fi
+}
+
+cmd_status() {  # fleet status [--all] [--json] — the whole tree
+  exec python3 "$SELF_DIR/fleet-status.py" "$@"
+}
+
+cmd_context() {  # fleet context [--role R] [--json] [--budget N] — front-loaded context per role
+  exec python3 "$SELF_DIR/fleet-context.py" "$@"
+}
+
+# ---------- dispatch ----------
+
+case "$sub" in
+  hub)         cmd_hub ;;
+  w)           cmd_worker "$@" ;;
+  dispatch)      cmd_dispatch "$@" ;;
+  _dispatch-run) cmd_dispatch_run "$@" ;;
+  attach)        cmd_attach ;;
+  wait)          cmd_wait "${1:-}" ;;
+  global)        cmd_global "${1:-}" ;;
+  r)           cmd_remote "$@" ;;
+  ls)          cmd_ls ;;
+  del)         cmd_del "${1:-}" ;;
+  prune)       cmd_prune ;;
+  refresh)     cmd_refresh "${1:-}" ;;
+  add-agent)   cmd_add_agent "${1:-}" ;;
+  agents)      cmd_agents ;;
+  doctor)      cmd_doctor "$@" ;;
+  sync-remote) cmd_sync_remote "${1:-}" ;;
+  machines)    cmd_machines "$@" ;;
+  status)      cmd_status "$@" ;;
+  context)     cmd_context "$@" ;;
+  peek)        cmd_peek "$@" ;;
+  send)        cmd_send "$@" ;;
+esac

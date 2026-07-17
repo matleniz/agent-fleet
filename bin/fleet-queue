@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# fleet-queue — print the active project's agent-queue config (resolved the same
+# way as fleet / new-worker: --project / $FLEET_PROJECT / cwd; no implicit default).
+# The generic workflow skills run this to learn WHERE to file proposals/findings
+# for the current project, instead of hardcoding one project's tracker.
+set -euo pipefail
+SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+. "$SELF_DIR/fleet-config.sh"
+
+proj=""
+if [ "${1:-}" = "--project" ]; then proj="${2:-}"; shift 2; fi
+fleet_resolve_conf "$proj"
+
+echo "PROJECT=$(basename "$CONF" .env)"
+echo "CODE_REPO=${CODE_REPO:-}"
+echo "HUB=${HUB:-}"
+echo "QUEUE_KIND=${QUEUE_KIND:-none}"
+echo "QUEUE_LINEAR_TEAM=${QUEUE_LINEAR_TEAM:-}"
+echo "QUEUE_LINEAR_PROJECT_ID=${QUEUE_LINEAR_PROJECT_ID:-}"
+echo "QUEUE_LINEAR_PROJECT_NAME=${QUEUE_LINEAR_PROJECT_NAME:-}"
+echo "QUEUE_GITHUB_REPO=${QUEUE_GITHUB_REPO:-}"

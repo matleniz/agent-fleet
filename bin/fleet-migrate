@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# fleet-migrate — one-shot, explicit migration from the legacy claude-fleet
+# config layout to the agent-fleet one. Run it ONCE at cutover, review, done.
+#
+# There is deliberately NO automatic fallback from ~/.config/fleet to the legacy
+# ~/.config/claude-fleet: during the transition both fleets coexist on the same
+# machine, and a silent fallback would let the NEW tools resolve and operate on
+# the OLD fleet's projects (real repos) — exactly what isolation must prevent.
+#
+#   fleet-migrate            # copy legacy project envs -> ~/.config/fleet
+#   fleet-migrate --dry-run  # show what would be copied
+set -euo pipefail
+
+LEGACY="${LEGACY_FLEET_HOME:-$HOME/.config/claude-fleet}"
+NEW="${FLEET_HOME:-$HOME/.config/fleet}"
+dry=""
+[ "${1:-}" = "--dry-run" ] && dry=1
+
+[ -d "$LEGACY/projects" ] || { echo "nothing to migrate: $LEGACY/projects not found"; exit 0; }
+
+mkdir -p "$NEW/projects"
+n=0
+for f in "$LEGACY/projects"/*.env; do
+  [ -e "$f" ] || continue
+  b="$(basename "$f")"
+  if [ "$b" = "default.env" ]; then
+    echo "SKIP     $b (there is no implicit default project anymore)"
+    continue
+  fi
+  dest="$NEW/projects/$b"
+  if [ -L "$f" ]; then
+    target="$(readlink "$f")"
+    echo "symlink  $b -> $target"
+    [ -z "$dry" ] && ln -sfn "$target" "$dest"
+  elif [ -e "$dest" ]; then
+    echo "SKIP     $b (already exists in $NEW/projects — resolve by hand)"
+    continue
+  else
+    echo "copy     $b"
+    [ -z "$dry" ] && cp "$f" "$dest"
+  fi
+  n=$((n+1))
+done
+
+echo
+if [ -n "$dry" ]; then
+  echo "[dry-run] $n project env(s) would be migrated to $NEW/projects. Legacy left untouched."
+else
+  echo "$n project env(s) migrated to $NEW/projects. Legacy config left in place at $LEGACY"
+  echo "(delete it yourself once the cutover is validated)."
+fi

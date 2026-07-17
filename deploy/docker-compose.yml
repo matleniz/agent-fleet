@@ -1,0 +1,33 @@
+# docker-compose.yml — one persistent fleet container on the VM.
+# Secrets and clone URLs come from deploy/.env (gitignored). Run from anywhere:
+#   docker compose -f deploy/docker-compose.yml up -d --build
+# then, once:  docker exec -it fleet fleet-vm-setup   (wires the volume)
+#              docker exec -it fleet <agent>           (one-time login per enabled CLI)
+services:
+  fleet:
+    build:
+      context: ..                 # repo root, so the Dockerfile can bake bin/ + packs/ + templates/
+      dockerfile: deploy/Dockerfile
+      args:
+        # Stamped into the image so `fleet --machine X` can warn on a stale VM.
+        # `fleet sync-remote` sets ENGINE_SHA=<short>; a bare build leaves "unknown".
+        ENGINE_SHA: ${ENGINE_SHA:-unknown}
+      # args (also):
+      #   PACKS: "claude opencode"   # agent CLIs baked in the image (default: claude)
+    image: agent-fleet:latest
+    # Container + tmux + volume names default to "fleet" but can be overridden in
+    # .env (FLEET_CONTAINER / FLEET_TMUX / FLEET_VOLUME) so several containers can
+    # run on ONE host; a machine-registry entry then points at one via
+    # MACHINE_CONTAINER / MACHINE_TMUX. On distinct VMs the defaults are fine.
+    container_name: ${FLEET_CONTAINER:-fleet}
+    restart: unless-stopped       # survives VM reboot; tmux sessions are re-launched by hand
+    stdin_open: true
+    tty: true
+    env_file:
+      - .env                      # GH_TOKEN, PROJECT_NAME, clone URLs, AGENTS, QUEUE_*, FLEET_TMUX — never committed
+    volumes:
+      - fleet-home:/home/fleet    # repos, worktrees, ~/.config, per-CLI creds + sessions
+
+volumes:
+  fleet-home:
+    name: ${FLEET_VOLUME:-fleet-home}

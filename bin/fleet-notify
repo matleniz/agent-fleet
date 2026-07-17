@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# fleet-notify — hook-side notifier: POST a one-line event to ntfy when a
+# worker needs attention (waiting on a permission, finished, ...).
+# Installed into worker hooks by packs when the project sets NTFY_TOPIC
+# (templates/fleet.env). Usage: fleet-notify <topic> <label> [event]
+# The hook's JSON payload may arrive on stdin; its message enriches the line.
+# A notifier must NEVER break a tool call: every failure is a silent no-op.
+topic="${1:-}"; label="${2:-worker}"; event="${3:-attention}"
+[ -z "$topic" ] && exit 0
+
+detail=""
+if [ ! -t 0 ]; then
+  detail="$(python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get("message") or d.get("title") or d.get("hook_event_name") or "")
+except Exception:
+    pass' 2>/dev/null || true)"
+fi
+msg="$label: ${detail:-$event}"
+
+case "$topic" in
+  *://*) url="$topic" ;;                # full URL = self-hosted ntfy
+  *)     url="https://ntfy.sh/$topic" ;;
+esac
+curl -s -m 5 -d "$msg" "$url" >/dev/null 2>&1 || true
+exit 0

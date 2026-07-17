@@ -1,0 +1,128 @@
+# opencode pack — opencode (sst/opencode, npm opencode-ai).
+# Sourced by fleet_load_pack; must define the five required pack_* functions
+# (pack_doctor is optional, used by `fleet doctor`).
+# Verified against opencode 1.17.18 (config schema + empirical checks).
+#
+# opencode scopes sessions by git REPO (projectID = root commit), not by
+# worktree — every worktree of one repo shares a project. A bare --continue
+# could therefore resume another worker's session. Both functions below filter
+# on the session's `directory` field instead, keeping resume per-worktree.
+
+# Launch opencode in the CURRENT directory (caller cd's first).
+# --auto auto-approves everything not explicitly denied — the hub edit rules
+# in opencode.json are explicit denies, so the barrier survives it.
+pack_launch() {
+  if [ "${1:-}" = "--resume" ]; then
+    local sid
+    sid="$(opencode session list --format json 2>/dev/null | python3 -c '
+import json, os, sys
+try: sessions = json.load(sys.stdin)
+except Exception: sessions = []
+cwd = os.getcwd()
+for s in sessions:  # newest first
+    if s.get("directory") == cwd:
+        print(s["id"]); break
+')"
+    [ -n "$sid" ] && exec opencode --auto -s "$sid"
+  fi
+  exec opencode --auto
+}
+
+# Headless launch for `fleet dispatch`: run one task non-interactively. --auto
+# auto-approves everything not explicitly denied, so the hub edit denies in
+# opencode.json still hold (same posture as pack_launch's interactive --auto).
+pack_launch_headless() { exec opencode run --auto "$1"; }
+
+# fleet global: opencode reads ~/.config/opencode/AGENTS.md natively (and also
+# ~/.claude/CLAUDE.md), so symlink it at the canonical per-user file. Backs up a
+# pre-existing real file. mode=status only reports. Echoes a status word.
+pack_global_setup() {
+  local canon="$1" mode="${2:-install}" f="$HOME/.config/opencode/AGENTS.md"
+  command -v opencode >/dev/null || { echo "skipped:not-installed"; return 0; }
+  if [ -L "$f" ] && [ "$(readlink -f "$f" 2>/dev/null)" = "$(readlink -f "$canon" 2>/dev/null)" ]; then
+    echo "wired"; return 0
+  fi
+  [ "$mode" = status ] && { echo "not-wired"; return 0; }
+  mkdir -p "$(dirname "$f")"
+  [ -f "$f" ] && [ ! -L "$f" ] && cp "$f" "$f.bak"
+  ln -sfn "$canon" "$f"
+  echo "wired"
+}
+
+# `opencode session list` boots the whole node CLI (~1s). The list is
+# repo-scoped and identical from any worktree of the repo, so when the caller
+# provides a per-invocation cache dir (fleet ls exports FLEET_CACHE_DIR),
+# fetch it once and reuse it across worktrees.
+_opencode_session_json() {
+  local dir="$1" cache="" json
+  if [ -n "${FLEET_CACHE_DIR:-}" ] && [ -d "${FLEET_CACHE_DIR:-}" ]; then
+    cache="$FLEET_CACHE_DIR/opencode-sessions.json"
+  fi
+  if [ -n "$cache" ] && [ -f "$cache" ]; then cat "$cache"; return; fi
+  if json="$(cd "$dir" 2>/dev/null && opencode session list --format json 2>/dev/null)"; then
+    # Cache only a SUCCESSFUL listing: a cached transient failure would hide
+    # every worktree's sessions for the rest of the invocation.
+    if [ -n "$cache" ]; then printf '%s' "$json" > "$cache"; fi
+  else
+    json='[]'
+  fi
+  printf '%s' "$json"
+}
+
+pack_has_sessions() {
+  local dir="$1"
+  _opencode_session_json "$dir" | python3 -c '
+import json, sys
+try: sessions = json.load(sys.stdin)
+except Exception: sessions = []
+sys.exit(0 if any(s.get("directory") == sys.argv[1] for s in sessions) else 1)
+' "$dir"
+}
+
+# Worktree-relative files pack_worker_setup writes (the core ignores them
+# when judging a worktree dirty for del/prune).
+pack_barrier_files() { echo "opencode.json"; }
+
+# Per-worktree setup: the read-only-hub barrier, opencode flavor — purely
+# declarative, no hook needed. permission.external_directory grants native
+# reads on the hub (outside the project root); permission.edit deny blocks
+# the edit/write/patch tools on it. Explicit denies hold under --auto.
+#
+# CRITICAL (verified in sst/opencode source, tool/edit.ts): the edit
+# permission is matched against path.relative(worktree, filePath), NOT the
+# absolute path — an absolute-only deny pattern silently never matches and
+# the "barrier" lets hub writes through. So the deny is written in RELATIVE
+# form (computed here, since worktree depth varies per project), with the
+# absolute form kept as a second pattern in case the matching changes.
+# Uses $HUB from the caller (new-worker). No hub -> nothing to do.
+pack_worker_setup() {
+  local dest="$1"
+  [ -n "${HUB:-}" ] || return 0
+  # json.dump, not a heredoc: an interpolated $HUB with JSON-special chars
+  # would produce a deny pattern that silently never matches (fail-open).
+  python3 - "$dest" <<'PY'
+import json, os, sys
+dest, hub = sys.argv[1], os.environ["HUB"]
+rel = os.path.relpath(hub, dest)
+cfg = {
+    "$schema": "https://opencode.ai/config.json",
+    "permission": {
+        "external_directory": {f"{hub}/**": "allow"},
+        "edit": {f"{rel}/**": "deny", f"{hub}/**": "deny"},
+    },
+}
+json.dump(cfg, open(os.path.join(dest, "opencode.json"), "w"), indent=2)
+PY
+}
+
+# Install line for the VM image / a fresh machine
+# (auth: `opencode auth login` per provider; free gateway models need none).
+pack_install() { echo "npm install -g opencode-ai"; }
+
+# Optional: fleet doctor status line.
+pack_doctor() {
+  command -v opencode >/dev/null || { echo "NOT INSTALLED (npm i -g opencode-ai)"; return; }
+  local v n; v="$(opencode --version 2>/dev/null | head -1)"
+  n="$(python3 -c 'import json;print(len(json.load(open("'"$HOME"'/.local/share/opencode/auth.json"))))' 2>/dev/null || echo 0)"
+  echo "installed ($v) — $n provider credential(s); free gateway models need none"
+}

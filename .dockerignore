@@ -1,0 +1,4 @@
+# Keep local build/dev artifacts out of the image (COPY bin/ would bake them).
+.git
+**/__pycache__
+*.pyc

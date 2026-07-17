@@ -1,0 +1,21 @@
+{
+  "_comment": "Written into each worktree by new-worker. The allow:Read + additionalDirectories make the hub READABLE; the PreToolUse hook is what BLOCKS writes to it (a deny rule would not, see docs/02). Replace ABS_HUB and ABS_GUARD with absolute paths.",
+  "permissions": {
+    "allow": [
+      "Read(ABS_HUB/**)"
+    ],
+    "additionalDirectories": [
+      "ABS_HUB"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "ABS_GUARD ABS_HUB" }
+        ]
+      }
+    ]
+  }
+}

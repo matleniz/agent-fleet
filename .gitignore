@@ -1,0 +1,8 @@
+# machine-local config lives in ~/.config/fleet, never in the repo.
+# (templates/fleet.env is the tracked template and must stay tracked.)
+/fleet.env
+
+# scratch
+*.log
+.DS_Store
+__pycache__/
