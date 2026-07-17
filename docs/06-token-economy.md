@@ -107,11 +107,15 @@ does not cover. All four are usage discipline, not fleet code:
   writes that allowlist into each worktree's config, so workers connect only those
   servers — not whatever the machine happens to have. Support is per CLI: the
   **gemini** pack applies it fully (`mcp.allowed` gates every scope); the
-  **claude** pack gates the project `.mcp.json` servers via `enabledMcpjsonServers`
-  but NOT user-scope servers in `~/.claude.json` (those still load — launch with
-  `--strict-mcp-config` by hand for full isolation). opencode/cursor/copilot don't
-  apply it yet (their per-project MCP scoping needs verifying); antigravity has no
-  per-workspace MCP config, so it can't. Unset = inherit everything (no change).
+  **opencode** pack fully too (no allowlist key exists, so it disables the
+  non-allowed servers it finds in the global config); the **claude** pack gates
+  the project `.mcp.json` servers via `enabledMcpjsonServers` but NOT user-scope
+  servers in `~/.claude.json` (those still load — launch with `--strict-mcp-config`
+  by hand for full isolation). **cursor** and **copilot** can't: their project MCP
+  config only *adds to / overrides* the user-scope servers, it cannot suppress
+  them, and their disable is global rather than per-worktree (both verified).
+  **antigravity** has no per-workspace MCP config at all. Unset = inherit
+  everything (no change).
 - **Model tiering + effort caps.** Route mechanical work (renames, formatting,
   checklist passes) to a cheaper model and cap extended thinking; keep the
   strong model for judgment. The key mechanism: when a strong orchestrator

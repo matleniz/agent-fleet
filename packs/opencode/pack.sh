@@ -119,6 +119,34 @@ PY
 
 # Install line for the VM image / a fresh machine
 # (auth: `opencode auth login` per provider; free gateway models need none).
+# Optional: lean worker MCP profile (fleet WORKER_MCP). opencode merges configs
+# and has no allowlist key — only a per-server "enabled" (verified: a project
+# opencode.json with mcp.<name>.enabled=false suppresses a globally-defined
+# server). So to allowlist, enumerate the servers opencode would load (from the
+# global config) and set enabled:false for every one NOT in the allowlist, in the
+# worktree's opencode.json (which the barrier already wrote). "none" disables all.
+# Best-effort: only servers visible in the standard global config are gated.
+pack_mcp_profile() {  # <dest> <allowlist>
+  local dest="$1"
+  WORKER_MCP_ALLOW="$2" \
+  OPENCODE_GLOBAL="${OPENCODE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json}" \
+  python3 - "$dest/opencode.json" <<'PY'
+import json, os, sys
+allow = set(os.environ["WORKER_MCP_ALLOW"].split())
+if allow == {"none"}: allow = set()
+names = set()
+try: names |= set(json.load(open(os.environ.get("OPENCODE_GLOBAL", ""))).get("mcp", {}).keys())
+except Exception: pass
+try: cfg = json.load(open(sys.argv[1]))
+except Exception: cfg = {}
+names |= set(cfg.get("mcp", {}).keys())   # also gate servers the project itself defines
+mcp = cfg.setdefault("mcp", {})
+for n in names - allow:
+    mcp.setdefault(n, {})["enabled"] = False
+json.dump(cfg, open(sys.argv[1], "w"), indent=2)
+PY
+}
+
 pack_install() { echo "npm install -g opencode-ai"; }
 
 # Optional: fleet doctor status line.

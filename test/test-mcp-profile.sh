@@ -40,6 +40,18 @@ jassert "$d/.claude/settings.local.json" 'cfg.get("enableAllProjectMcpServers")=
 jassert "$d/.claude/settings.local.json" '"permissions" in cfg and "hooks" in cfg'    "barrier keys preserved (merge)"
 rm -rf "$d"
 
+echo "[opencode] allowlist by disabling non-allowed global servers + merge + none"
+d="$(mktemp -d)"; g="$(mktemp -d)"
+printf '{"mcp":{"alpha":{"enabled":true},"beta":{"enabled":true}}}' > "$g/opencode.json"  # global catalogue
+printf '{"permission":{"edit":"deny"}}' > "$d/opencode.json"                              # pretend barrier
+( source "$REPO/packs/opencode/pack.sh"; OPENCODE_CONFIG="$g/opencode.json" pack_mcp_profile "$d" "alpha" )
+jassert "$d/opencode.json" 'cfg["mcp"]["beta"]["enabled"] is False'          "non-allowed global server disabled"
+jassert "$d/opencode.json" 'cfg["mcp"].get("alpha",{}).get("enabled") is not False' "allowed server left enabled"
+jassert "$d/opencode.json" 'cfg["permission"]["edit"]=="deny"'               "barrier preserved (merge)"
+( source "$REPO/packs/opencode/pack.sh"; OPENCODE_CONFIG="$g/opencode.json" pack_mcp_profile "$d" "none" )
+jassert "$d/opencode.json" 'cfg["mcp"]["alpha"]["enabled"] is False and cfg["mcp"]["beta"]["enabled"] is False' "none -> all disabled"
+rm -rf "$d" "$g"
+
 echo "[hub-less] pack_mcp_profile creates the config when none exists yet"
 d="$(mktemp -d)"
 ( source "$REPO/packs/gemini/pack.sh"; pack_mcp_profile "$d" "linear" )

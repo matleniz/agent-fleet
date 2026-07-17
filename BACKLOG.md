@@ -43,17 +43,18 @@ instead: ntfy notifications (claude pack hooks + `bin/fleet-notify`) and
   in the worktree when switching agents. Cheap to standardize in the worker
   skills. https://wal.sh/research/2026-q2-cli-coding-agents/
 
-- **Lean worker MCP profile** — SHIPPED (partial). `WORKER_MCP` allowlist in a
-  project `.env`, applied per worktree via the optional `pack_mcp_profile`
-  (wired by `fleet_setup_worktree`, so it survives a refresh). Done: **gemini**
-  (full — `mcp.allowed` gates every scope) and **claude** (partial —
-  `enabledMcpjsonServers` gates the project `.mcp.json`, NOT user-scope
-  `~/.claude.json`; full isolation needs `--strict-mcp-config`, a generated
-  config from `~/.claude.json` — deferred). Still open: **opencode** (only
-  per-server `enabled:false`, no allowlist-by-omission), **cursor** and
-  **copilot** (project-vs-global MCP merge/suppression semantics undocumented —
-  verify empirically before implementing). **antigravity** cannot: no
-  per-workspace MCP config exists (open Google feature request). See docs/06.
+- **Lean worker MCP profile** — SHIPPED. `WORKER_MCP` allowlist in a project
+  `.env`, applied per worktree via the optional `pack_mcp_profile` (wired by
+  `fleet_setup_worktree`, so it survives a refresh). Done: **gemini** (full —
+  `mcp.allowed` gates every scope) and **opencode** (full — no allowlist key, so
+  it disables the non-allowed servers it enumerates from the global config;
+  verified live). **claude** partial — `enabledMcpjsonServers` gates the project
+  `.mcp.json`, NOT user-scope `~/.claude.json`; full isolation needs
+  `--strict-mcp-config` + a generated config from `~/.claude.json` (deferred, the
+  one remaining sub-item). Confirmed NOT possible (verified empirically):
+  **cursor** and **copilot** — their project MCP config only adds to / overrides
+  the user-scope servers, cannot suppress them, and their disable is global not
+  per-worktree; **antigravity** has no per-workspace MCP config. See docs/06.
 
 ## Bigger bets (wait for a real need)
 
