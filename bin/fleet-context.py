@@ -24,46 +24,12 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from fleet_common import parse_env  # noqa: E402
+
 ROOT = os.environ.get("FLEET_HOME") or os.path.expanduser("~/.config/fleet")
 PROJECTS_DIR = os.path.join(ROOT, "projects")
 DEFAULT_ENV = os.path.join(ROOT, "default.env")
-
-# --- .env parsing (copied from fleet-status.py — keep in sync) --------------
-_ASSIGN = re.compile(r'^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$')
-_VAR = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)')
-
-
-def _expand(value, scope):
-    value = os.path.expanduser(value) if value.startswith("~") else value
-
-    def repl(m):
-        name = m.group(1) or m.group(2)
-        return scope.get(name, os.environ.get(name, ""))
-
-    return _VAR.sub(repl, value)
-
-
-def parse_env(path):
-    scope = {}
-    try:
-        with open(path) as fh:
-            lines = fh.readlines()
-    except OSError:
-        return scope
-    for line in lines:
-        line = line.rstrip("\n")
-        if not line or line.lstrip().startswith("#"):
-            continue
-        m = _ASSIGN.match(line)
-        if not m:
-            continue
-        key, raw = m.group(1), m.group(2).strip()
-        if raw[:1] not in ('"', "'") and " #" in raw:
-            raw = raw.split(" #", 1)[0].strip()
-        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ('"', "'"):
-            raw = raw[1:-1]
-        scope[key] = _expand(raw, scope)
-    return scope
 
 
 # --- helpers ----------------------------------------------------------------
