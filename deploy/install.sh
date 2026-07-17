@@ -119,7 +119,7 @@ provision_project() {
   done
 
   echo "[fleet-vm-setup] === project '$p' ==="
-  local code_dir="$HOME/$(basename "$code" .git)"
+  local code_dir; code_dir="$HOME/$(basename "$code" .git)"
   clone_if_absent "$code" "$code_dir"
   local hub_dir=""
   if [ -n "$hub" ]; then hub_dir="$HOME/$(basename "$hub" .git)"; clone_if_absent "$hub" "$hub_dir"; fi

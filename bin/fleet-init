@@ -101,6 +101,8 @@ done
 # rejected loudly rather than silently mangled into a wrong path.
 abspath() {
   local p="$1"
+  # shellcheck disable=SC2088  # the ~ patterns match a LITERAL leading tilde in the
+  # user's input on purpose, then expand it by hand below
   case "$p" in
     "~")    p="$HOME" ;;
     "~/"*)  p="$HOME/${p#\~/}" ;;

@@ -10,7 +10,9 @@ acceptEdits writes straight through a deny). This hook is the real barrier.
 Reads the tool-call JSON on stdin; exits 2 (block) if the target path is inside
 the hub, else 0 (allow). The hub path comes from argv[1], else $HUB.
 """
-import sys, json, os
+import sys
+import json
+import os
 
 hub = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("HUB", "")
 if not hub:

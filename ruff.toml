@@ -1,0 +1,4 @@
+# Dev/CI-only lint config (nothing at runtime reads it; the repo stays dep-free).
+# bin/fleet-assess is a Python tool with no .py extension, so `ruff check` would
+# skip it by default — include it so it is linted like the other bin/*.py tools.
+extend-include = ["**/fleet-assess"]

@@ -564,12 +564,13 @@ cmd_add_agent() {
   if fleet_agent_enabled "$pack"; then
     echo "[fleet] '$pack' already enabled (AGENTS=\"$(fleet_agents)\")."
   else
-    local new_agents="$(fleet_agents) $pack"
+    local new_agents; new_agents="$(fleet_agents) $pack"
     if grep -q '^AGENTS=' "$CONF"; then
       sed -i "s|^AGENTS=.*|AGENTS=\"$new_agents\"|" "$CONF"
     else
       printf 'AGENTS="%s"\n' "$new_agents" >> "$CONF"
     fi
+    # shellcheck disable=SC2034  # keep the in-memory AGENTS in sync with the .env just written
     AGENTS="$new_agents"
     echo "[fleet] AGENTS=\"$new_agents\" written to $CONF"
   fi

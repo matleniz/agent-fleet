@@ -16,7 +16,10 @@ Usage:
   fleet-assess --hub PATH [--code PATH]
   fleet-assess [--project NAME]     # resolves the project (--project / cwd; no default)
 """
-import argparse, os, sys, subprocess
+import argparse
+import os
+import sys
+import subprocess
 
 SELF_DIR = os.path.dirname(os.path.realpath(__file__))
 

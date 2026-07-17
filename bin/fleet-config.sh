@@ -23,7 +23,7 @@ global_canon() { echo "${FLEET_GLOBAL_AGENTS:-$HOME/.agents/AGENTS.md}"; }
 # could point here by mistake — refuse loudly instead of reading it. Cutover is
 # explicit via fleet-migrate, never a silent fallback.
 case "$(readlink -f "$FLEET_ROOT" 2>/dev/null || printf '%s' "$FLEET_ROOT")" in
-  */claude-fleet|*/claude-fleet/*|*/.config/claude-fleet|*/.config/claude-fleet/*)
+  */claude-fleet|*/claude-fleet/*)   # also matches */.config/claude-fleet[/*]
     echo "error: FLEET_HOME resolves to the legacy claude-fleet config ($FLEET_ROOT)." >&2
     echo "  agent-fleet must not read the legacy fleet. Unset FLEET_HOME or point" >&2
     echo "  it at ~/.config/fleet; migrate real projects with fleet-migrate." >&2
@@ -110,7 +110,7 @@ FLEET_PACKS_DIR="${FLEET_PACKS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && 
 fleet_agents() { echo "${AGENTS:-claude}"; }
 
 fleet_default_agent() {
-  # shellcheck disable=SC2086
+  # shellcheck disable=SC2086,SC2046  # word-splitting AGENTS into packs is intended
   set -- $(fleet_agents); echo "$1"
 }
 
@@ -317,6 +317,7 @@ fleet_load_machine() {
   fi
   if [ "$name" = remote ] && [ -n "${REMOTE_HOST:-}" ]; then
     M_HOST="$REMOTE_HOST" M_CONTAINER="${REMOTE_CONTAINER:-fleet}" M_TMUX="${REMOTE_TMUX:-fleet}"
+    # shellcheck disable=SC2034  # M_ENGINE/M_PROJECT are read by bin/fleet (same process)
     M_ENGINE="${REMOTE_ENGINE_DIR:-agent-fleet}" M_PROJECT="${REMOTE_PROJECT:-$proj}"
     return 0
   fi

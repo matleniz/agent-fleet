@@ -1,0 +1,15 @@
+# ShellCheck config for agent-fleet. Dev/CI only — nothing at runtime reads this
+# (the repo stays dependency-free; shellcheck is a lint step in CI, see
+# .github/workflows/ci.yml). Keep in sync with any new deliberate patterns.
+
+shell=bash
+
+# The tools resolve their own dir at runtime and source siblings, and load each
+# project's config by a computed path (`. "$CONF"`). Following a non-constant
+# source is impossible statically, so silence that noise instead of chasing it.
+disable=SC1090,SC1091
+
+# Where the path IS fixed (`. "$SELF_DIR/fleet-config.sh"`), let shellcheck follow
+# it so cross-file helpers/vars are understood.
+external-sources=true
+source-path=SCRIPTDIR

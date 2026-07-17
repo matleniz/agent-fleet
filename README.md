@@ -1,5 +1,7 @@
 # agent-fleet
 
+[![CI](https://github.com/matleniz/agent-fleet/actions/workflows/ci.yml/badge.svg)](https://github.com/matleniz/agent-fleet/actions/workflows/ci.yml)
+
 A workflow for running several coding-agent sessions (Claude Code, Gemini CLI,
 ...) on one machine without them fighting each other, tuned to spend as few
 tokens as possible for the same quality of work. The core is agent-agnostic;

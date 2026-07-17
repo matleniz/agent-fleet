@@ -56,6 +56,10 @@ code, so the fix is to keep them in one pass, not to file a proposal.
 ## Conventions
 - Bash + Python 3, no external deps. Scripts run via `~/.local/bin` symlinks, so
   they resolve their own dir with `readlink -f` before sourcing siblings.
+- CI (`.github/workflows/ci.yml`) runs shellcheck (`.shellcheckrc`, severity
+  warning), ruff (`ruff.toml`), and the whole `test/*.sh` suite on push/PR. These
+  are dev/CI-only — nothing at runtime depends on them; keep the repo dep-free.
+  A deliberate shellcheck exception goes in a `# shellcheck disable=` with a why.
 - The read-only barrier is per pack (claude: PreToolUse hook; gemini:
   BeforeTool hook, both sharing `hub-readonly-guard.py`; opencode: declarative
   permission rules — with the edit patterns in worktree-RELATIVE form;

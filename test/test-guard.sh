@@ -26,7 +26,7 @@ eq()   { if [ "$2" = "$3" ]; then ok "$1 ($2)"; else bad "$1: expected '$3', got
 echo "[1] per-machine limit resolution"
 # shellcheck disable=SC1091
 . "$REPO/bin/fleet-config.sh"
-PROJ_NAME=test
+PROJ_NAME="test"
 
 # Built-in defaults when nothing is set.
 fleet_load_machine local
