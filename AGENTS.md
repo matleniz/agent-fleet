@@ -15,9 +15,11 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
   `antigravity`, `copilot`), each a `pack.sh` defining six required functions
   (`pack_launch`, `pack_launch_headless`, `pack_has_sessions`,
   `pack_worker_setup`, `pack_barrier_files`, `pack_install`) plus optional
-  `pack_doctor` and optional `pack_global_setup` (wire this CLI's per-user
+  `pack_doctor`, optional `pack_global_setup` (wire this CLI's per-user
   global-instructions file for `fleet global`; packs whose CLI has no global
-  mechanism omit it). `pack_launch_headless <prompt>` is the non-interactive
+  mechanism omit it), and optional `pack_mcp_profile <dest> <allowlist>` (apply
+  the project's `WORKER_MCP` lean-MCP allowlist to a worktree; packs whose CLI
+  can't scope MCP per project omit it). `pack_launch_headless <prompt>` is the non-interactive
   launch behind `fleet dispatch` (same barrier + bypass posture as
   `pack_launch`). The core never names a CLI; projects enable packs via
   `AGENTS="..."` in their .env. `packs/hub-mount-ns.sh` is a shared helper

@@ -228,6 +228,22 @@ fleet_symlink_global_setup() {  # <cli-cmd> <canon> <mode> <target-file> [wired-
   echo "$label"
 }
 
+# Apply a pack's per-worktree setup in one place, used by BOTH worker creation
+# (new-worker) and the refresh path (fleet refresh): the read-only-hub barrier,
+# then — if WORKER_MCP is set and the pack implements the optional
+# pack_mcp_profile — the lean MCP allowlist. Running both here means a refresh
+# (which rewrites the barrier settings file) re-applies the MCP profile too,
+# instead of silently dropping it. Runs the pack in a subshell (fleet_load_pack
+# defines its functions); returns non-zero if any step fails so the caller can
+# roll back. WORKER_MCP is a space-separated allowlist of MCP server names (the
+# sentinel "none" = no servers); empty/unset leaves MCP untouched (inherit all).
+fleet_setup_worktree() {  # <pack> <dest>
+  ( fleet_load_pack "$1" \
+      && pack_worker_setup "$2" \
+      && { [ -z "${WORKER_MCP:-}" ] || ! declare -F pack_mcp_profile >/dev/null \
+             || pack_mcp_profile "$2" "$WORKER_MCP"; } )
+}
+
 # Defaults + exports read by the packs' pack_worker_setup (called by both
 # new-worker and fleet's refresh path, after fleet_resolve_conf).
 fleet_export_worker_env() {

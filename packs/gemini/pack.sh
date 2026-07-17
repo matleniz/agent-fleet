@@ -87,6 +87,24 @@ json.dump(cfg, open(sys.argv[1], "w"), indent=2)
 PY
 }
 
+# Optional: lean worker MCP profile (fleet WORKER_MCP). Gemini's `mcp.allowed`
+# is a true allowlist across ALL scopes: only the named servers connect, so a
+# worktree settings.json with just what this project needs suppresses the rest.
+# "none" -> empty list -> no MCP servers. Merges into any barrier settings already
+# written (same .gemini/settings.json), so it survives a fleet refresh.
+pack_mcp_profile() {  # <dest> <allowlist>
+  local dest="$1"; mkdir -p "$dest/.gemini"
+  WORKER_MCP_ALLOW="$2" python3 - "$dest/.gemini/settings.json" <<'PY'
+import json, os, sys
+allow = os.environ["WORKER_MCP_ALLOW"].split()
+if allow == ["none"]: allow = []
+try: cfg = json.load(open(sys.argv[1]))
+except Exception: cfg = {}
+cfg.setdefault("mcp", {})["allowed"] = allow
+json.dump(cfg, open(sys.argv[1], "w"), indent=2)
+PY
+}
+
 # Install line for the VM image / a fresh machine
 # (auth: Google OAuth on first run, or GEMINI_API_KEY).
 pack_install() { echo "npm install -g @google/gemini-cli"; }

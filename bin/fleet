@@ -546,7 +546,7 @@ cmd_refresh() {
   [ "${#targets[@]}" -eq 0 ] && { echo "[fleet] refresh: no worktrees."; return; }
   for p in "${targets[@]}"; do
     for a in $(fleet_agents); do
-      pack_in "$a" pack_worker_setup "$p" \
+      fleet_setup_worktree "$a" "$p" \
         || { echo "error: pack '$a' setup failed on $p (see above)" >&2; exit 1; }
     done
     echo "  refreshed $(basename "$p") (packs: $(fleet_agents))"

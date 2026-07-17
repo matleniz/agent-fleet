@@ -59,7 +59,7 @@ git -C "$CODE_REPO" worktree add -b "$name" "$dest" "$base"
 # If ANY pack fails, the worktree is rolled back: a persisted half-barriered
 # worktree would be reopened by `fleet w` with no barrier (silent fail-open).
 for a in $(fleet_agents); do
-  ( fleet_load_pack "$a" && pack_worker_setup "$dest" ) || {
+  fleet_setup_worktree "$a" "$dest" || {
     echo "error: pack '$a' worker setup failed — rolling back the worktree" >&2
     git -C "$CODE_REPO" worktree remove --force "$dest" \
       || echo "WARNING: rollback failed — $dest is HALF SET UP (missing barriers); remove it by hand, do NOT reopen it" >&2

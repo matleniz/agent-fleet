@@ -114,6 +114,26 @@ json.dump(cfg, open(sys.argv[1], "w"), indent=2)
 PY
 }
 
+# Optional: lean worker MCP profile (fleet WORKER_MCP). Writes enabledMcpjsonServers
+# into the worktree's settings.local.json so only the named servers from the
+# project .mcp.json auto-connect ("none" -> none). CAVEAT: this gates the project
+# .mcp.json servers only; user-scope servers (~/.claude.json) still load — full
+# isolation would need launching with --strict-mcp-config (not done here). Merges
+# into the barrier settings already written, so it survives a fleet refresh.
+pack_mcp_profile() {  # <dest> <allowlist>
+  local dest="$1"; mkdir -p "$dest/.claude"
+  WORKER_MCP_ALLOW="$2" python3 - "$dest/.claude/settings.local.json" <<'PY'
+import json, os, sys
+allow = os.environ["WORKER_MCP_ALLOW"].split()
+if allow == ["none"]: allow = []
+try: cfg = json.load(open(sys.argv[1]))
+except Exception: cfg = {}
+cfg["enableAllProjectMcpServers"] = False
+cfg["enabledMcpjsonServers"] = allow
+json.dump(cfg, open(sys.argv[1], "w"), indent=2)
+PY
+}
+
 # Install line for the VM image / a fresh machine (auth: one-time OAuth login).
 pack_install() { echo "npm install -g @anthropic-ai/claude-code"; }
 

@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           for t in test/test-context.sh test/test-guard.sh test/global.sh \
-                   test/dispatch.sh test/barrier-cursor.sh; do
+                   test/test-mcp-profile.sh test/dispatch.sh test/barrier-cursor.sh; do
             echo "::group::$t"
             bash "$t"
             echo "::endgroup::"

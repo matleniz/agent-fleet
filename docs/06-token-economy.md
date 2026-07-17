@@ -102,7 +102,16 @@ does not cover. All four are usage discipline, not fleet code:
   the first prompt. Keep workers lean: connect only the MCP servers the task
   needs, prefer a CLI command over an MCP tool when both exist, and turn on
   deferred tool loading where the CLI supports it (measured around -85% of
-  tool-definition tokens).
+  tool-definition tokens). The fleet automates the first part: set
+  `WORKER_MCP="name ..."` (or `none`) in a project `.env` and `pack_worker_setup`
+  writes that allowlist into each worktree's config, so workers connect only those
+  servers — not whatever the machine happens to have. Support is per CLI: the
+  **gemini** pack applies it fully (`mcp.allowed` gates every scope); the
+  **claude** pack gates the project `.mcp.json` servers via `enabledMcpjsonServers`
+  but NOT user-scope servers in `~/.claude.json` (those still load — launch with
+  `--strict-mcp-config` by hand for full isolation). opencode/cursor/copilot don't
+  apply it yet (their per-project MCP scoping needs verifying); antigravity has no
+  per-workspace MCP config, so it can't. Unset = inherit everything (no change).
 - **Model tiering + effort caps.** Route mechanical work (renames, formatting,
   checklist passes) to a cheaper model and cap extended thinking; keep the
   strong model for judgment. The key mechanism: when a strong orchestrator

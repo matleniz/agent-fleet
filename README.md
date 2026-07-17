@@ -256,6 +256,7 @@ agent-fleet/
 │   ├── test-context.sh       isolated-fixture tests for the context reporter
 │   ├── dispatch.sh           headless dispatch: per-pack flags, tmux worker, remote, write-probe
 │   ├── global.sh             fleet global wiring across the packs
+│   ├── test-mcp-profile.sh   lean worker MCP profile (WORKER_MCP -> pack_mcp_profile)
 │   ├── barrier-cursor.sh     cursor read-only-hub barrier (structural + opt-in live)
 │   └── barrier-mount-ns.sh   mount-namespace barrier E2E (arg: antigravity | copilot)
 └── deploy/                  run the fleet on an always-on VM (Docker), see deploy/README.md
