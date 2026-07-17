@@ -415,11 +415,13 @@ cmd_remote() {
       shift
       local text="$*"
       [ -z "$text" ] && { echo "usage: fleet r broadcast \"<message>\"" >&2; exit 2; }
-      case "$text" in *"'"*) echo "error: no single quotes in a broadcast message" >&2; exit 2;; esac
       [ "$M_LOCAL" = 1 ] && { echo "error: broadcast targets a remote machine" >&2; exit 2; }
       # Send the message to EVERY window of the remote tmux (uzi's broadcast
-      # pattern): "commit and stop", "rebase on main", ...
-      ssh "$M_HOST" "docker exec $M_CONTAINER bash -lc 'for w in \$(tmux list-windows -t $M_TMUX -F \"#{window_index}:#{window_name}\" 2>/dev/null); do tmux send-keys -t $M_TMUX:\${w%%:*} \"$text\" Enter && echo \"sent to \$w\"; done'" ;;
+      # pattern): "commit and stop", "rebase on main", ... The text rides as
+      # base64 (decoded into $txt on the remote), so quotes/`$`/backticks in it
+      # are never re-evaluated by the remote shell — no injection, any text goes.
+      local b64; b64="$(printf '%s' "$text" | base64 | tr -d '\n')"
+      ssh "$M_HOST" "docker exec $M_CONTAINER bash -lc 'txt=\$(printf %s $b64 | base64 -d); for w in \$(tmux list-windows -t $M_TMUX -F \"#{window_index}:#{window_name}\" 2>/dev/null); do tmux send-keys -t $M_TMUX:\${w%%:*} \"\$txt\" Enter && echo \"sent to \$w\"; done'" ;;
     *)
       echo "error: unknown remote subcommand '${1}'" >&2
       echo "  fleet r                    attach the machine's tmux" >&2
@@ -871,9 +873,10 @@ global_ensure_canon() {
 # Per-pack report/wire. mode=install wires; mode=status is read-only. A pack with
 # no pack_global_setup (cursor, antigravity) prints "unsupported".
 global_report() {
-  local mode="$1" canon="$2" a status
+  local mode="$1" canon="$2" a status d
   echo "global instructions: $canon"
-  for a in $(ls "$FLEET_PACKS_DIR" 2>/dev/null); do
+  for d in "$FLEET_PACKS_DIR"/*/; do
+    a="$(basename "$d")"
     [ -f "$FLEET_PACKS_DIR/$a/pack.sh" ] || continue
     status="$( ( fleet_load_pack "$a" >/dev/null 2>&1 \
                  && declare -F pack_global_setup >/dev/null \
@@ -957,12 +960,14 @@ cmd_send() {  # fleet send <machine> <window> "<text>" — type text+Enter
   local mname="${1:-}" win="${2:-}"; shift 2 2>/dev/null || true
   local text="$*"
   { [ -z "$mname" ] || [ -z "$win" ] || [ -z "$text" ]; } && { echo "usage: fleet send <machine> <window> \"<text>\"" >&2; exit 2; }
-  case "$text" in *"'"*) echo "error: no single quotes in send text (tmux/ssh quoting)" >&2; exit 2;; esac
   fleet_load_machine "$mname" || exit 2
   if [ "$M_LOCAL" = 1 ]; then
     tmux send-keys -t "$M_TMUX:$win" "$text" Enter && echo "sent to $mname:$win"
   else
-    ssh "$M_HOST" "docker exec $M_CONTAINER tmux send-keys -t $M_TMUX:$win \"$text\" Enter" && echo "sent to $mname:$win"
+    # Text rides as base64 (decoded on the remote), so quotes/`$`/backticks are
+    # never re-evaluated by the remote shell — no injection, any text goes.
+    local b64; b64="$(printf '%s' "$text" | base64 | tr -d '\n')"
+    ssh "$M_HOST" "docker exec $M_CONTAINER bash -lc 'tmux send-keys -t $M_TMUX:$win \"\$(printf %s $b64 | base64 -d)\" Enter'" && echo "sent to $mname:$win"
   fi
 }
 
