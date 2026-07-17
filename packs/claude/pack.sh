@@ -30,6 +30,7 @@ pack_launch() {
   local resume=()
   [ "${1:-}" = "--resume" ] && resume=(--continue)
   pack_claude_subagent_model
+  fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
   exec claude --permission-mode auto "${resume[@]}"
 }
 
@@ -42,6 +43,7 @@ pack_launch() {
 # the account default). --model is a real claude flag (verified against v2.1.x).
 pack_launch_headless() {
   pack_claude_subagent_model
+  fleet_node_heap_guard
   exec claude -p "$1" --permission-mode auto ${2:+--model "$2"}
 }
 

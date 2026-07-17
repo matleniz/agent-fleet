@@ -187,7 +187,11 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    (`MAX_WORKERS` / `MIN_FREE_MB` / `MIN_FREE_DISK_MB`, per-machine in
    `machines/<name>.env`, global in `default.env`; built-ins 6/2048/5120, `0`
    = off). Fail-fast: wait for a slot (`fleet wait`) and retry, or override with
-   `fleet --force dispatch …` / `FLEET_NO_GUARD=1`. See
+   `fleet --force dispatch …` / `FLEET_NO_GUARD=1`. The admission gate has no
+   runtime re-check, so on a constrained box also set `WORKER_NODE_MAX_MB` (a V8
+   heap cap that OOM-kills a leaking node worker cleanly), and note `fleet
+   del`/`prune` now reap the worker's tmux window so dead windows stop inflating
+   the count. See
    [docs/07](docs/07-machine-and-solo.md#resource-guard-rails-dont-oom-the-box).
 
 **Working solo is fine.** You do not need workers, a queue, or routines to

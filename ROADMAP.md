@@ -1,8 +1,11 @@
 # Roadmap — resource management (anti-crash)
 
 Context: on a small box (WSL2, ~8 GiB RAM) the fleet can freeze the host. Root
-cause is **memory, not disk**. Nothing here is applied yet; this file is the
-resume point.
+cause is **memory, not disk**.
+
+Status: **B, C (repo side), D are implemented** (heap-cap knob, small-box preset
+docs, teardown reaper). **A** is a manual host change (outside the repo) and **E**
+(runtime watchdog) is deferred by design — A+B+C+D cover the crash.
 
 ## Diagnosis (confirmed)
 
@@ -54,7 +57,13 @@ Effect: even if the VM OOMs, Windows survives; swap absorbs spikes; RAM is
 returned. This alone stops the host freeze. Cannot be scripted from inside WSL
 (the shutdown would kill the session doing it) — apply by hand.
 
-### B — per-worker V8 heap cap  [IN REPO]
+### B — per-worker V8 heap cap  [IN REPO] — DONE
+Implemented: `FLEET_DEF_WORKER_NODE_MAX_MB` (default 0 = off) + `fleet_node_heap_guard`
+in `bin/fleet-config.sh`; the four node packs (claude/gemini/opencode/copilot)
+call it before `exec` in both launch paths. Override with `WORKER_NODE_MAX_MB`
+(project/global). Docs: docs/02, docs/07, README, templates/{fleet,default}.env.
+Original design notes below.
+
 Inject `NODE_OPTIONS=--max-old-space-size=<N>` at launch so a leaking CLI gets
 OOM-killed cleanly (rc≠0, fleet sees it via `.status`) instead of dragging the
 host down. A node hitting the cap self-terminates.
@@ -73,7 +82,12 @@ host down. A node hitting the cap self-terminates.
 - Docs to update in the same pass (repo rule: docs = done): `docs/02` (barrier /
   launch posture), `README.md` config table, `templates/` project .env comment.
 
-### C — tune the guard for this box  [IN REPO / config]
+### C — tune the guard for this box  [IN REPO / config] — DONE (repo side)
+Repo side shipped: the small-box preset (`MACHINE_MAX_WORKERS=2`,
+`MACHINE_MIN_FREE_MB=3072`, `WORKER_NODE_MAX_MB=2048`) is documented in docs/07.
+Still per-box: create your own `~/.config/fleet/machines/local.env` (instance
+config, never in the repo). Original notes below.
+
 Create `~/.config/fleet/machines/local.env` (mechanism already supported,
 `fleet-config.sh:211-218`):
 ```sh
@@ -84,7 +98,11 @@ Calibrates the admission gate for a small box. This is instance config, not repo
 code — but consider lowering the shipped `FLEET_DEF_*` defaults too, or at least
 documenting the small-box preset in `README.md` / `BOOTSTRAP.md`.
 
-### D — teardown reaper  [IN REPO, from subagent audit]
+### D — teardown reaper  [IN REPO, from subagent audit] — DONE
+Implemented in `bin/fleet`: `reap_worker_state` (called by `cmd_del`/`cmd_prune`)
+kills the worker's tmux window via `dispatch_tmux` and GCs `.status`/`.meta`;
+`rotate_events_log` caps `events.log`. Original notes below.
+
 Close the launch-gate-without-reaper gap:
 - `cmd_del`/`cmd_prune` (`bin/fleet:483-527`): add `tmux kill-window -t
   "$LT:$name"` alongside the `worktree remove`, mirroring the remote path

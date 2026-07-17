@@ -77,6 +77,11 @@ real shell/tool access **and** the read-only-hub barrier still holds. Hand-rolli
 the launch instead (e.g. `agent -p --trust`, which is not a real cursor flag) is
 what produces a worker with no shell; go through `dispatch`.
 
+The node packs (claude/gemini/opencode/copilot) also call `fleet_node_heap_guard`
+in both launch paths, which exports `NODE_OPTIONS=--max-old-space-size` when
+`WORKER_NODE_MAX_MB` is set — an anti-crash rail for constrained boxes, off by
+default (see [docs/07](07-machine-and-solo.md#resource-guard-rails-dont-oom-the-box)).
+
 The claude pack launches in **auto mode** rather than
 `--dangerously-skip-permissions`: on an org account whose managed settings set
 `permissions.disableBypassPermissionsMode: "disable"`, the bypass flag is

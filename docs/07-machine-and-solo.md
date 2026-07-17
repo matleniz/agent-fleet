@@ -140,6 +140,37 @@ exits non-zero — a coordinator should wait for a worker to finish
 Override a single launch with `--force` (a global option, before the subcommand:
 `fleet --force dispatch big "…"`) or `FLEET_NO_GUARD=1 fleet dispatch big "…"`.
 
+**Per-worker heap cap (the admission guard's blind spot).** The guard only checks
+at launch; once workers run, nothing re-checks them, and node-based agent CLIs
+leak unbounded — N of them in parallel can OOM the whole host, which the
+admission gate never re-fires to stop. Set `WORKER_NODE_MAX_MB` (same precedence
+as the floors: machine `.env` > project `.env` > `default.env` > built-in) and
+the node packs (claude/gemini/opencode/copilot) launch with
+`NODE_OPTIONS=--max-old-space-size=<MB>`, so a runaway worker is OOM-killed
+cleanly (its window shows a non-zero rc via `fleet ls`) instead of dragging the
+box down. Built-in default `0` (off): a shipped cap would surprise big-box users,
+so a constrained box opts in. It respects a `NODE_OPTIONS` you already export and
+is inherited by node the worker itself spawns (a task's `npm run build`), so size
+it above a legitimate build; the knob is the escape hatch.
+
+**Small-box preset.** On a constrained machine (e.g. WSL2 with ~8 GiB, where the
+VM has no memory cap and node CLIs leak), put the tighter numbers in a
+`machines/local.env` (`MACHINE_HOST=local`) so they stay machine-specific:
+```sh
+MACHINE_MAX_WORKERS=2
+MACHINE_MIN_FREE_MB=3072
+WORKER_NODE_MAX_MB=2048
+```
+The biggest single lever on WSL2 lives outside the repo: cap and reclaim the VM
+itself in `%USERPROFILE%\.wslconfig` (`memory=`, `swap=`, `autoMemoryReclaim=gradual`),
+then `wsl --shutdown`, so even a worker OOM cannot freeze Windows.
+
+**Teardown reaper.** `fleet del` / `fleet prune` remove the worktree *and* kill
+the worker's tmux window and GC its dispatch sidecars (`.status` / `.meta`) — a
+finished dispatch window is otherwise kept "for inspection" and would keep
+counting against `MAX_WORKERS`, causing false refusals. The dispatch `events.log`
+is capped so it cannot grow without bound.
+
 ### How the active project is resolved
 
 `fleet`, `new-worker`, and `fleet-assess` pick the project in this order:

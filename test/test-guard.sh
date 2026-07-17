@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# test-guard.sh — unit + isolated-E2E tests for the resource guard rail
-# (fleet-config.sh: per-machine limit resolution, guard_probe, fleet_guard;
-# bin/fleet: cmd_dispatch refuses before launching). Touches nothing real: it
-# runs against a throwaway $FLEET_HOME under a temp dir and never launches an
-# agent (every checked path is a refusal, which exits before any launch).
+# test-guard.sh — unit + isolated-E2E tests for the resource guard rails
+# (fleet-config.sh: per-machine limit resolution, guard_probe, fleet_guard, the
+# per-worker heap cap fleet_node_heap_guard; bin/fleet: cmd_dispatch refuses
+# before launching). Touches nothing real: it runs against a throwaway $FLEET_HOME
+# under a temp dir and never launches an agent (every checked path is a refusal,
+# which exits before any launch).
 #
 #   test/test-guard.sh
 set -uo pipefail
@@ -108,6 +109,19 @@ else bad "a worktree was created despite refusal"; fi
 out="$("$REPO/bin/fleet" --project x --force dispatch a "do a thing" 2>&1)"; rc=$?
 if printf '%s' "$out" | grep -q 'fleet-guard'; then bad "--force still hit the guard: $out"
 else ok "--force skips the guard"; fi
+
+# ---- 4. per-worker heap cap (fleet_node_heap_guard) ----
+echo "[4] fleet_node_heap_guard (NODE_OPTIONS heap cap)"
+heap() { ( unset NODE_OPTIONS; export NODE_OPTIONS="${1?}"; WORKER_NODE_MAX_MB="$2" \
+  FLEET_DEF_WORKER_NODE_MAX_MB="$3"; fleet_node_heap_guard; printf '%s' "${NODE_OPTIONS:-}" ); }
+# args: <preset NODE_OPTIONS> <WORKER_NODE_MAX_MB> <built-in default>
+eq "off by default (0)"              "$(heap '' '' 0)"      ""
+eq "WORKER_NODE_MAX_MB sets cap"     "$(heap '' 2048 0)"    "--max-old-space-size=2048"
+eq "built-in default applies"        "$(heap '' '' 3000)"   "--max-old-space-size=3000"
+eq "project wins over built-in"      "$(heap '' 1024 3000)" "--max-old-space-size=1024"
+eq "appends, preserves existing"     "$(heap '--enable-source-maps' 512 0)" "--enable-source-maps --max-old-space-size=512"
+eq "keeps caller's own cap"          "$(heap '--max-old-space-size=256' 4096 0)" "--max-old-space-size=256"
+eq "non-numeric -> off"              "$(heap '' abc 0)"     ""
 
 echo
 echo "guard tests: $pass passed, $fail failed"

@@ -9,12 +9,13 @@
 pack_launch() {
   local resume=()
   [ "${1:-}" = "--resume" ] && resume=(--resume latest)
+  fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
   exec gemini --approval-mode yolo "${resume[@]}"
 }
 
 # Headless launch for `fleet dispatch`: one task non-interactively, same bypass
 # posture as pack_launch (barrier is the BeforeTool hook, unaffected).
-pack_launch_headless() { exec gemini -p "$1" --approval-mode yolo; }
+pack_launch_headless() { fleet_node_heap_guard; exec gemini -p "$1" --approval-mode yolo; }
 
 # fleet global: ~/.gemini/GEMINI.md is Gemini's global instructions file, loaded
 # every session (docs: hierarchical global + project context). Symlink it to the

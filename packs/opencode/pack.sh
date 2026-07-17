@@ -13,6 +13,7 @@
 # --auto auto-approves everything not explicitly denied — the hub edit rules
 # in opencode.json are explicit denies, so the barrier survives it.
 pack_launch() {
+  fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
   if [ "${1:-}" = "--resume" ]; then
     local sid
     sid="$(opencode session list --format json 2>/dev/null | python3 -c '
@@ -32,7 +33,7 @@ for s in sessions:  # newest first
 # Headless launch for `fleet dispatch`: run one task non-interactively. --auto
 # auto-approves everything not explicitly denied, so the hub edit denies in
 # opencode.json still hold (same posture as pack_launch's interactive --auto).
-pack_launch_headless() { exec opencode run --auto "$1"; }
+pack_launch_headless() { fleet_node_heap_guard; exec opencode run --auto "$1"; }
 
 # fleet global: opencode reads ~/.config/opencode/AGENTS.md natively (and also
 # ~/.claude/CLAUDE.md), so symlink it at the canonical per-user file. Backs up a

@@ -499,6 +499,7 @@ cmd_del() {
     exit 1
   fi
   git -C "$MAIN" worktree remove --force "$dest"   # --force: only fleet-written barrier files remain
+  reap_worker_state "$name"   # kill the lingering tmux window + GC dispatch sidecars
   echo "[fleet] worktree removed: $dest"
   if git -C "$MAIN" branch -d "$name" 2>/dev/null; then
     echo "[fleet] branch removed: $name (merged)"
@@ -525,6 +526,7 @@ cmd_prune() {
       echo "  keep  $name (branch '$branch' not merged into $base)"; kept=$((kept+1)); continue
     fi
     git -C "$MAIN" worktree remove --force "$p"   # --force: only fleet-written barrier files remain
+    reap_worker_state "$name"   # kill the lingering tmux window + GC dispatch sidecars
     git -C "$MAIN" branch -d "$name" 2>/dev/null || true
     echo "  prune $name (merged into $base)"; pruned=$((pruned+1))
   done
@@ -714,6 +716,29 @@ dispatch_tmux() { echo "${LOCAL_TMUX:-fleet-$PROJ_NAME}"; }
 # `fleet ls` / `fleet wait`. ntfy stays the human's phone ping.
 dispatch_state_dir() { echo "$FLEET_ROOT/dispatch/$PROJ_NAME"; }
 
+# Teardown a worker's leftover runtime state once its worktree is gone (del/prune).
+# The launch guard has no reaper: a finished worker's tmux window lingers ("kept
+# for inspection") and is still counted by guard_probe, so dead windows inflate
+# the count and cause false refusals — operators then reach for --force and the
+# only rail is off. Removing the window here closes that loop. Local interactive
+# and dispatched workers share the dispatch_tmux session, so one kill covers both;
+# the remote path (fleet r del) kills the container window separately. Best-effort.
+reap_worker_state() {  # <worker-name>
+  local name="$1" sdir
+  command -v tmux >/dev/null 2>&1 && tmux kill-window -t "$(dispatch_tmux):$name" 2>/dev/null || true
+  sdir="$(dispatch_state_dir)"
+  rm -f "$sdir/$name.status" "$sdir/$name.meta"
+}
+
+# Keep the append-only dispatch events.log bounded (slow unbounded growth otherwise).
+rotate_events_log() {  # <path>
+  local f="$1" max=1000 n
+  [ -f "$f" ] || return 0
+  n="$(wc -l < "$f" 2>/dev/null || echo 0)"
+  [ "${n:-0}" -gt "$max" ] 2>/dev/null || return 0
+  tail -n "$((max/2))" "$f" > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f"
+}
+
 dispatch_status_label() {  # <worker-name> -> "[dispatch: running] " / "[dispatch: done rc=0] "
   local f; f="$(dispatch_state_dir)/$1.status"
   [ -f "$f" ] || return 0
@@ -836,6 +861,7 @@ $task" "${FLEET_MODEL:-}" )
   local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
   printf 'done rc=%s' "$rc" > "$sdir/$name.status"
   printf '%s %s done rc=%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$rc" >> "$sdir/events.log"
+  rotate_events_log "$sdir/events.log"   # keep the append-only history bounded
   # Human's phone ping (best effort), same channel as the pack Stop hooks.
   [ -n "${NTFY_TOPIC:-}" ] && "$NOTIFY" "$NTFY_TOPIC" "$name" "done rc=$rc" >/dev/null 2>&1
   echo "[fleet] worker '$name' finished (rc=$rc) — recorded for the coordinator (fleet ls / fleet wait)"

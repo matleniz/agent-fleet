@@ -63,6 +63,7 @@ PY
 pack_launch() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
+  fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
   if [ "${1:-}" = "--resume" ]; then
     local sid; sid="$(_cop_session_for "$PWD")"
     [ -n "$sid" ] && _fleet_hub_ro_exec copilot --allow-all-tools "${adddir[@]}" --resume="$sid"
@@ -75,6 +76,7 @@ pack_launch() {
 pack_launch_headless() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
+  fleet_node_heap_guard
   _fleet_hub_ro_exec copilot -p "$1" --allow-all-tools "${adddir[@]}"
 }
 

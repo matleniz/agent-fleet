@@ -45,6 +45,16 @@ FLEET_DEF_MAX_WORKERS=6         # live workers per machine
 FLEET_DEF_MIN_FREE_MB=2048      # MemAvailable floor, MB
 FLEET_DEF_MIN_FREE_DISK_MB=5120 # free disk floor on WT_HOME's filesystem, MB
 
+# Per-worker V8 heap cap (anti-crash on small boxes). The admission guard above
+# only gates at launch; once running, node-based agent CLIs leak unbounded and can
+# OOM the whole host with no re-check. When WORKER_NODE_MAX_MB (project/global) or
+# this built-in is >0, the node packs export NODE_OPTIONS=--max-old-space-size so a
+# runaway worker is OOM-killed cleanly (rc!=0, fleet sees it via .status) instead
+# of dragging the box down. 0 = off (the generic default: a shipped cap would
+# surprise big-box users; a small box opts in via WORKER_NODE_MAX_MB, like the
+# guard floors). See docs/07-machine-and-solo.md.
+FLEET_DEF_WORKER_NODE_MAX_MB=0  # V8 old-space cap per node worker, MB (0 = off)
+
 _fleet_list() {
   echo "known projects (--project <name>):" >&2
   if [ -d "$FLEET_PROJECTS" ]; then
@@ -141,6 +151,20 @@ fleet_write_probe() {
   else
     echo "write-probe: FAIL (headless wrote nothing — check managed permissions / login / userns)"
   fi
+}
+
+# Per-worker V8 heap cap, applied at launch by the NODE packs (claude/gemini/
+# opencode/copilot) — call from pack_launch / pack_launch_headless before exec.
+# Reads WORKER_NODE_MAX_MB (project/global .env, re-sourced in the launch window)
+# or the built-in default; 0 disables. Appends to any NODE_OPTIONS already set and
+# leaves an existing --max-old-space-size alone (never fights a caller's value).
+# A no-op on non-node CLIs, but scoped to the node packs so the intent is explicit.
+fleet_node_heap_guard() {
+  local mb="${WORKER_NODE_MAX_MB:-$FLEET_DEF_WORKER_NODE_MAX_MB}"
+  case "$mb" in ''|*[!0-9]*) mb=0 ;; esac
+  [ "$mb" = 0 ] && return 0
+  case "${NODE_OPTIONS:-}" in *--max-old-space-size=*) return 0 ;; esac
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=$mb"
 }
 
 # Defaults + exports read by the packs' pack_worker_setup (called by both
