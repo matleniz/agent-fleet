@@ -41,6 +41,12 @@ edit the real code yourself. From this hub:
 - `fleet ls` — worktrees + per-pack session markers; `fleet status` for the
   worker tree, commits, and queue; `fleet prune` at checkpoints to drop merged
   worktrees.
+- `fleet chats [<worker>]` — per-pack pointer to the conversation recorded in a
+  worktree (bare = this hub, i.e. your own session). When you switch a worker's
+  agent, or one dies mid-task (crash, credit limit), read the prior transcript to
+  reprise what never made it into the hub. Sessions are NOT portable between CLIs,
+  so READ the pointer, do not resume it — and fold anything worth keeping back
+  into the hub, the durable handoff.
 
 Building something across several workers? Use the `dispatch-work` skill: it
 partitions the work by **file ownership, not pipeline phase** (streams that share
