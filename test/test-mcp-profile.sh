@@ -48,7 +48,7 @@ rm -rf "$d"
 
 echo "[wiring] fleet_setup_worktree applies barrier + profile in one pass"
 d="$(mktemp -d)"; hub="$(mktemp -d)"
-( export FLEET_HOME="$(mktemp -d)"          # keep the legacy-config guard happy
+( FLEET_HOME="$(mktemp -d)"; export FLEET_HOME   # keep the legacy-config guard happy
   source "$REPO/bin/fleet-config.sh"
   export HUB="$hub" GUARD="$REPO/bin/hub-readonly-guard.py"
   WORKER_MCP="linear" fleet_setup_worktree gemini "$d" )
