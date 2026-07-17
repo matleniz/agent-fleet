@@ -17,7 +17,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 stub="$(mktemp -d)"; H="$(mktemp -d)"; H2="$(mktemp -d)"; WT="$(mktemp -d)"
 trap 'rm -rf "$stub" "$H" "$H2" "$WT"' EXIT
-for c in claude opencode gemini agy copilot; do printf '#!/usr/bin/env bash\nexit 0\n' >"$stub/$c"; chmod +x "$stub/$c"; done
+for c in claude opencode gemini agy copilot agent; do printf '#!/usr/bin/env bash\nexit 0\n' >"$stub/$c"; chmod +x "$stub/$c"; done
 run() { HOME="$1" PATH="$stub:$PATH" "$ENGINE/bin/fleet" "${@:2}"; }
 
 # --- sandbox 1: existing CLAUDE.md -> migration path + native wirings ---
