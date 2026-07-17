@@ -237,7 +237,8 @@ agent-fleet/
 │   ├── opencode/pack.sh      opencode: declarative barrier, per-worktree session filter
 │   ├── cursor/pack.sh        Cursor CLI: declarative barrier (.cursor/cli.json), md5-cwd sessions
 │   ├── antigravity/pack.sh   Antigravity: OS mount-namespace barrier (hub ro), no in-CLI deny; fails closed w/o userns
-│   └── copilot/pack.sh       GitHub Copilot CLI: OS mount-namespace barrier (hub ro) like antigravity; reads AGENTS.md natively
+│   ├── copilot/pack.sh       GitHub Copilot CLI: OS mount-namespace barrier (hub ro) like antigravity; reads AGENTS.md natively
+│   └── hub-mount-ns.sh       shared mount-namespace barrier helper (_fleet_hub_ro_exec), sourced by antigravity + copilot
 ├── templates/
 │   ├── fleet.env             per-project config (projects/<name>.env)
 │   ├── default.env           cross-project defaults (default.env: MACHINES_DEFAULT, resource limits)

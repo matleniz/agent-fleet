@@ -113,6 +113,14 @@ pack_chat_pointer() {
   [ -n "$sid" ] && echo "$HOME/.copilot/session-state/$sid/"
 }
 
+# fleet global: Copilot CLI reads a native per-user instructions file at
+# ~/.copilot/copilot-instructions.md (relocated by $COPILOT_HOME), applied to every
+# session regardless of project — symlink it to the canonical. (A repo's AGENTS.md
+# is read natively too, but that is project context, not per-user identity.)
+pack_global_setup() {
+  fleet_symlink_global_setup copilot "$1" "${2:-install}" "${COPILOT_HOME:-$HOME/.copilot}/copilot-instructions.md"
+}
+
 # Install line for the VM image / a fresh machine. Auth: `copilot login` (OAuth
 # device flow; on a box without a system keychain, rerun and accept plaintext
 # storage), or a token in COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN (the

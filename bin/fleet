@@ -935,9 +935,10 @@ global_ensure_canon() {
   fi
 }
 
-# Per-pack report/wire. mode=install wires; mode=status is read-only. A pack with
-# no pack_global_setup (copilot — it reads a repo's AGENTS.md natively) prints
-# "unsupported".
+# Per-pack report/wire. mode=install wires; mode=status is read-only. Each pack's
+# pack_global_setup echoes its status (wired / not-wired / skipped:not-installed,
+# or a fallback note like cursor's "project rule"); a pack that defined none would
+# print "unsupported" (all bundled packs implement it).
 global_report() {
   local mode="$1" canon="$2" a status d
   echo "global instructions: $canon"

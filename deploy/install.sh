@@ -77,12 +77,16 @@ clone_if_absent() {  # <url> <dest>
   fi
 }
 
-# Worker skills, global: .agents/skills is the cross-CLI standard dir;
-# .claude/skills gets per-skill symlinks for Claude Code. Idempotent.
+# Not-hub-coupled skills, global: .agents/skills is the cross-CLI standard dir;
+# .claude/skills gets per-skill symlinks for Claude Code. Idempotent. Same set as
+# the README quickstart / docs/07: the two worker skills plus dispatch-work (the
+# coordinator's forward-dispatch playbook — the VM's headless-dispatch use case
+# needs it). Hub-coupled skills (doc-nav, process-agent-queue) are seeded per hub
+# by fleet-init, not here.
 wire_skills() {
   mkdir -p "$HOME/.agents/skills" "$HOME/.claude/skills"
   local s
-  for s in propose-doc-change resolve-finding; do
+  for s in propose-doc-change resolve-finding dispatch-work; do
     if [ -d "$FLEET_SRC/templates/skills/$s" ]; then
       rm -rf "$HOME/.agents/skills/$s"
       cp -r "$FLEET_SRC/templates/skills/$s" "$HOME/.agents/skills/"

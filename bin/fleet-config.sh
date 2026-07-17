@@ -197,6 +197,26 @@ fleet_seed_from_template() {  # <template> <dest>
   fi
 }
 
+# Shared `fleet global` wiring for a CLI that HAS a native per-user instructions
+# file: symlink that file to the one canonical file. Called from a pack's
+# pack_global_setup (claude is the exception — it uses an @import bridge, not a
+# symlink). Idempotent; backs up a pre-existing real file once; mode=status only
+# reports. Echoes the status word the report prints ("wired"/"not-wired"/
+# "skipped:not-installed"). <wired-label> overrides the "wired" word (antigravity
+# notes it shares ~/.gemini/GEMINI.md with the gemini pack).
+fleet_symlink_global_setup() {  # <cli-cmd> <canon> <mode> <target-file> [wired-label]
+  local cli="$1" canon="$2" mode="${3:-install}" f="$4" label="${5:-wired}"
+  command -v "$cli" >/dev/null || { echo "skipped:not-installed"; return 0; }
+  if [ -L "$f" ] && [ "$(readlink -f "$f" 2>/dev/null)" = "$(readlink -f "$canon" 2>/dev/null)" ]; then
+    echo "$label"; return 0
+  fi
+  [ "$mode" = status ] && { echo "not-wired"; return 0; }
+  mkdir -p "$(dirname "$f")"
+  [ -f "$f" ] && [ ! -L "$f" ] && cp "$f" "$f.bak"
+  ln -sfn "$canon" "$f"
+  echo "$label"
+}
+
 # Defaults + exports read by the packs' pack_worker_setup (called by both
 # new-worker and fleet's refresh path, after fleet_resolve_conf).
 fleet_export_worker_env() {

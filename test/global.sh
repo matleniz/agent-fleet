@@ -5,10 +5,11 @@
 # installed-checks pass).
 #
 # Native wiring: claude @import, opencode symlink, gemini + antigravity share
-# ~/.gemini/GEMINI.md (symlink). cursor has no user-level global file, so it gets
-# the per-worktree fallback (an always-apply .cursor/rules/*.mdc regenerated from
-# the canonical, git-excluded). Asserts migration, all wirings, the status
-# report, idempotency, template seeding, and the cursor fallback + git-exclude.
+# ~/.gemini/GEMINI.md (symlink), copilot symlink (~/.copilot/copilot-instructions.md).
+# cursor has no user-level global file, so it gets the per-worktree fallback (an
+# always-apply .cursor/rules/*.mdc regenerated from the canonical, git-excluded).
+# Asserts migration, all wirings, the status report, idempotency, template
+# seeding, and the cursor fallback + git-exclude.
 set -euo pipefail
 
 ENGINE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -16,7 +17,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 stub="$(mktemp -d)"; H="$(mktemp -d)"; H2="$(mktemp -d)"; WT="$(mktemp -d)"
 trap 'rm -rf "$stub" "$H" "$H2" "$WT"' EXIT
-for c in claude opencode gemini agy; do printf '#!/usr/bin/env bash\nexit 0\n' >"$stub/$c"; chmod +x "$stub/$c"; done
+for c in claude opencode gemini agy copilot; do printf '#!/usr/bin/env bash\nexit 0\n' >"$stub/$c"; chmod +x "$stub/$c"; done
 run() { HOME="$1" PATH="$stub:$PATH" "$ENGINE/bin/fleet" "${@:2}"; }
 
 # --- sandbox 1: existing CLAUDE.md -> migration path + native wirings ---
@@ -34,11 +35,12 @@ grep -q "rule ALPHA" "$canon" || fail "CLAUDE.md content not migrated into canon
 { [ -L "$H/.config/opencode/AGENTS.md" ] && [ "$(readlink -f "$H/.config/opencode/AGENTS.md")" = "$(readlink -f "$canon")" ]; } || fail "opencode not symlinked to canonical"
 { [ -L "$H/.gemini/GEMINI.md" ] && [ "$(readlink -f "$H/.gemini/GEMINI.md")" = "$(readlink -f "$canon")" ]; } || fail "gemini/antigravity GEMINI.md not symlinked to canonical"
 { [ -f "$H/.gemini/GEMINI.md.bak" ] && grep -q "old gemini global" "$H/.gemini/GEMINI.md.bak"; } || fail "pre-existing GEMINI.md not backed up"
-echo "PASS: migration + claude @import + opencode symlink + gemini/antigravity GEMINI.md symlink (backup kept)"
+{ [ -L "$H/.copilot/copilot-instructions.md" ] && [ "$(readlink -f "$H/.copilot/copilot-instructions.md")" = "$(readlink -f "$canon")" ]; } || fail "copilot copilot-instructions.md not symlinked to canonical"
+echo "PASS: migration + claude @import + opencode/gemini/antigravity/copilot symlinks (backups kept)"
 
 # --- status report ---
 out="$(run "$H" global status 2>/dev/null)"
-for p in claude opencode gemini antigravity; do echo "$out" | grep -qE "$p +wired" || fail "$p not reported wired ($out)"; done
+for p in claude opencode gemini antigravity copilot; do echo "$out" | grep -qE "$p +wired" || fail "$p not reported wired ($out)"; done
 echo "$out" | grep -qE "cursor +project rule" || fail "cursor not reported as project-rule fallback ($out)"
 echo "PASS: status reports claude/opencode/gemini/antigravity wired, cursor project-rule fallback"
 

@@ -173,9 +173,13 @@ rebuild no longer needs a `fleet-vm-setup` re-run.
   prompt, but it cannot perform that first login/trust: do the `docker exec -it`
   once per CLI first. Do not try to pre-write the trust flag into `~/.claude.json`
   by hand — the auto-mode classifier blocks that self-modification, correctly.
-- **antigravity + a hub don't mix.** Its pack fails closed on hub projects (no
-  path-deny mechanism, see docs/02): enabling it in `AGENTS` of a project WITH
-  a hub makes every worker creation error out. Hub-less projects only.
+- **antigravity/copilot need unprivileged user namespaces.** Having no in-CLI
+  per-path deny, their read-only-hub barrier is an OS mount namespace that
+  bind-mounts the hub read-only at launch (`packs/hub-mount-ns.sh`, see docs/02) —
+  so they DO run on hub projects, worker jailed, coordinator in the hub unconfined.
+  The pack fails closed only where unprivileged userns is unavailable (some
+  hardened kernels / nested-container hosts): there, enable them on hub-less
+  projects, or run the container with the privileges userns needs.
 - **Hub hardening (optional).** For a belt-and-braces barrier, mount the hub
   clone read-only into worker containers or `chmod -R a-w` it outside
   coordinator sessions — the per-pack barriers block the edit tools, not shell

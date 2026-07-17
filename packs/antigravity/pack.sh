@@ -65,17 +65,8 @@ pack_launch_headless() {
 # fleet global: agy reuses ~/.gemini/, whose GEMINI.md is the global instructions
 # file loaded every session (same file the gemini pack wires; idempotent).
 # Symlink it to the canonical; back up a pre-existing real file.
-pack_global_setup() {
-  local canon="$1" mode="${2:-install}" f="$HOME/.gemini/GEMINI.md"
-  command -v agy >/dev/null || { echo "skipped:not-installed"; return 0; }
-  if [ -L "$f" ] && [ "$(readlink -f "$f" 2>/dev/null)" = "$(readlink -f "$canon" 2>/dev/null)" ]; then
-    echo "wired (shared ~/.gemini/GEMINI.md)"; return 0
-  fi
-  [ "$mode" = status ] && { echo "not-wired"; return 0; }
-  mkdir -p "$HOME/.gemini"
-  [ -f "$f" ] && [ ! -L "$f" ] && cp "$f" "$f.bak"
-  ln -sfn "$canon" "$f"
-  echo "wired (shared ~/.gemini/GEMINI.md)"
+pack_global_setup() {  # agy reads ~/.gemini/GEMINI.md, shared with the gemini pack
+  fleet_symlink_global_setup agy "$1" "${2:-install}" "$HOME/.gemini/GEMINI.md" "wired (shared ~/.gemini/GEMINI.md)"
 }
 
 pack_has_sessions() {

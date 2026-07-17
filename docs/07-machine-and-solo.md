@@ -270,9 +270,10 @@ to it:
   see it. This is the generic pattern for any provider without a native global
   file: `pack_global_setup` wires the native file, else `pack_global_inject`
   drops it into the working dir. Drop it once the cursor CLI ships a global file.
-- **GitHub Copilot** — nothing per-user is wired: Copilot reads a repo's
-  `AGENTS.md` natively (the same file the hub and worktrees already carry), so
-  `fleet global` leaves it alone.
+- **GitHub Copilot** — `~/.copilot/copilot-instructions.md` (Copilot's native
+  per-user instructions file, relocated by `$COPILOT_HOME`) symlinked to the
+  canonical. It also reads a repo's `AGENTS.md` natively, but that is project
+  context, not the per-user identity/machine rules this wires.
 
 Write your identity / machine facts / cross-project rules once; every agent reads
 them. `fleet global status` shows what is wired. Keep this file small: project

@@ -21,17 +21,8 @@ pack_launch_headless() { fleet_node_heap_guard; exec gemini -p "$1" --approval-m
 # every session (docs: hierarchical global + project context). Symlink it to the
 # canonical (backs up a pre-existing real file). Antigravity reuses ~/.gemini/,
 # so this also covers agy. mode=status only reports. Echoes a status word.
-pack_global_setup() {
-  local canon="$1" mode="${2:-install}" f="$HOME/.gemini/GEMINI.md"
-  command -v gemini >/dev/null || { echo "skipped:not-installed"; return 0; }
-  if [ -L "$f" ] && [ "$(readlink -f "$f" 2>/dev/null)" = "$(readlink -f "$canon" 2>/dev/null)" ]; then
-    echo "wired"; return 0
-  fi
-  [ "$mode" = status ] && { echo "not-wired"; return 0; }
-  mkdir -p "$HOME/.gemini"
-  [ -f "$f" ] && [ ! -L "$f" ] && cp "$f" "$f.bak"
-  ln -sfn "$canon" "$f"
-  echo "wired"
+pack_global_setup() {  # ~/.gemini/GEMINI.md is Gemini's native global file
+  fleet_symlink_global_setup gemini "$1" "${2:-install}" "$HOME/.gemini/GEMINI.md"
 }
 
 # Gemini stores sessions in ~/.gemini/tmp/<project-name>/chats/. The dir->name

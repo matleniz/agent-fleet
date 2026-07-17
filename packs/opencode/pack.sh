@@ -38,17 +38,8 @@ pack_launch_headless() { fleet_node_heap_guard; exec opencode run --auto "$1"; }
 # fleet global: opencode reads ~/.config/opencode/AGENTS.md natively (and also
 # ~/.claude/CLAUDE.md), so symlink it at the canonical per-user file. Backs up a
 # pre-existing real file. mode=status only reports. Echoes a status word.
-pack_global_setup() {
-  local canon="$1" mode="${2:-install}" f="$HOME/.config/opencode/AGENTS.md"
-  command -v opencode >/dev/null || { echo "skipped:not-installed"; return 0; }
-  if [ -L "$f" ] && [ "$(readlink -f "$f" 2>/dev/null)" = "$(readlink -f "$canon" 2>/dev/null)" ]; then
-    echo "wired"; return 0
-  fi
-  [ "$mode" = status ] && { echo "not-wired"; return 0; }
-  mkdir -p "$(dirname "$f")"
-  [ -f "$f" ] && [ ! -L "$f" ] && cp "$f" "$f.bak"
-  ln -sfn "$canon" "$f"
-  echo "wired"
+pack_global_setup() {  # ~/.config/opencode/AGENTS.md is opencode's native global file
+  fleet_symlink_global_setup opencode "$1" "${2:-install}" "$HOME/.config/opencode/AGENTS.md"
 }
 
 # `opencode session list` boots the whole node CLI (~1s). The list is

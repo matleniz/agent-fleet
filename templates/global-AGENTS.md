@@ -16,7 +16,7 @@ How each CLI is pointed at the one canonical file:
 | opencode | `~/.config/opencode/AGENTS.md` symlinked to the canonical (opencode also reads `~/.claude/CLAUDE.md` natively) |
 | Gemini CLI + Antigravity | `~/.gemini/GEMINI.md` symlinked to the canonical (both read it every session; agy reuses `~/.gemini/`) |
 | Cursor | no user-level global file exists in the CLI, so the canonical is injected per worktree as an always-apply `.cursor/rules/00-fleet-user.mdc` (git-excluded, regenerated on `fleet refresh`) — a temporary bridge until the CLI grows one |
-| GitHub Copilot CLI | nothing per-user is wired; Copilot reads a repo's `AGENTS.md` natively (the hub and worktrees already carry it) |
+| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` symlinked to the canonical (relocated by `$COPILOT_HOME`; Copilot also reads a repo's `AGENTS.md` natively for project context) |
 | Codex CLI | `~/.codex/AGENTS.md` (no Codex pack in this repo yet) |
 
 Fill in and trim:

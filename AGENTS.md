@@ -20,7 +20,9 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
   mechanism omit it). `pack_launch_headless <prompt>` is the non-interactive
   launch behind `fleet dispatch` (same barrier + bypass posture as
   `pack_launch`). The core never names a CLI; projects enable packs via
-  `AGENTS="..."` in their .env.
+  `AGENTS="..."` in their .env. `packs/hub-mount-ns.sh` is a shared helper
+  (`_fleet_hub_ro_exec`) sourced by the antigravity + copilot packs for their OS
+  mount-namespace barrier.
 - Context files: `AGENTS.md` is the source everywhere (this repo included);
   `CLAUDE.md` is a one-line `@AGENTS.md` bridge. Skills live in
   `.agents/skills/` (the agentskills.io standard), `.claude/skills` symlinks
