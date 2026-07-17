@@ -223,8 +223,9 @@ agent-fleet/
 │   ├── fleet-migrate         explicit one-shot migration from the legacy claude-fleet config
 │   ├── fleet-status.py       the whole tree as JSON/text (fleet status), for a UI
 │   ├── fleet-context.py      front-loaded context per role as JSON/text (fleet context)
+│   ├── fleet_common.py       shared .env parser + barrier-file set (imported by the two .py above)
 │   └── fleet-assess          score hub maturity → recommend a posture
-├── packs/                    one dir per agent CLI: 5 required pack_* functions + optional pack_doctor
+├── packs/                    one dir per agent CLI: 6 required pack_* functions + optional pack_doctor
 │   ├── claude/pack.sh        Claude Code: launch/resume flags, sessions, barrier settings
 │   ├── gemini/pack.sh        Gemini CLI: same contract via BeforeTool hook
 │   ├── opencode/pack.sh      opencode: declarative barrier, per-worktree session filter
@@ -243,7 +244,12 @@ agent-fleet/
 ├── test/
 │   ├── make-sandbox.sh       throwaway sandbox project to exercise the tools
 │   ├── test-guard.sh         unit + isolated-E2E tests for the resource guard rail
-│   └── test-context.sh       isolated-fixture tests for the context reporter
+│   ├── test-context.sh       isolated-fixture tests for the context reporter
+│   ├── dispatch.sh           headless dispatch: per-pack flags, tmux worker, remote, write-probe
+│   ├── global.sh             fleet global wiring across the packs
+│   ├── barrier-cursor.sh     cursor read-only-hub barrier (structural + opt-in live)
+│   ├── barrier-antigravity.sh  antigravity mount-namespace barrier E2E
+│   └── barrier-copilot.sh    copilot mount-namespace barrier E2E
 └── deploy/                  run the fleet on an always-on VM (Docker), see deploy/README.md
 ```
 

@@ -6,10 +6,11 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
 ## Layout
 - `bin/` — the canonical tools (`fleet`, `fleet-init`, `new-worker`,
   `fleet-assess`, `fleet-queue`, `fleet-config.sh`, `hub-readonly-guard.py`,
-  `fleet-notify`, `fleet-migrate`, `fleet-status.py`, `fleet-context.py`). Single
-  source of truth; every project uses these via `~/.local/bin` symlinks
-  (`fleet-status.py` / `fleet-context.py` are invoked by `fleet status` /
-  `fleet context`, no symlink, like `hub-readonly-guard.py`).
+  `fleet-notify`, `fleet-migrate`, `fleet-status.py`, `fleet-context.py`,
+  `fleet_common.py`). Single source of truth; every project uses these via
+  `~/.local/bin` symlinks (`fleet-status.py` / `fleet-context.py` are invoked by
+  `fleet status` / `fleet context`, no symlink, like `hub-readonly-guard.py`;
+  `fleet_common.py` is a shared import of those two, not run directly).
 - `packs/` — one dir per agent CLI (`claude`, `gemini`, `opencode`, `cursor`,
   `antigravity`, `copilot`), each a `pack.sh` defining six required functions
   (`pack_launch`, `pack_launch_headless`, `pack_has_sessions`,
@@ -25,7 +26,11 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
   `.agents/skills/` (the agentskills.io standard), `.claude/skills` symlinks
   to it for Claude Code.
 - `templates/` — per-project config + skill skeletons that `fleet-init` installs.
-- `test/` — `make-sandbox.sh` builds a throwaway project to exercise the tools.
+- `test/` — `make-sandbox.sh` builds a throwaway project to exercise the tools;
+  `dispatch.sh` (headless dispatch + per-pack flags + write-probe), `global.sh`
+  (`fleet global` wiring), `barrier-{cursor,antigravity,copilot}.sh` (per-pack
+  read-only-hub barrier), `test-guard.sh` (resource guard), `test-context.sh`
+  (context reporter).
 - `docs/` — the model (`01`-`07`). `BOOTSTRAP.md` — the setup prompt.
 
 ## Provenance and isolation (transition period)

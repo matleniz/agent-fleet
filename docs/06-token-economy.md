@@ -113,8 +113,10 @@ does not cover. All four are usage discipline, not fleet code:
   distillation). The failure mode is fan-out that silently *inherits* the
   orchestrator's model: N strong-model subagents doing mechanical work is the
   most expensive way to run a fleet — set the model per stage explicitly.
-  The packs launch each CLI at its default model; tiering is a per-session
-  choice today.
+  The packs launch each CLI at its default model; for interactive sessions
+  tiering is a per-session choice (the CLI's own `/model`), and for headless
+  workers `fleet dispatch --model M` sets it per dispatch (packs that support
+  it, e.g. claude).
 - **Cache-prefix hygiene.** The ~1/10 cache read only holds while the prefix
   is byte-identical and within TTL: keep volatile content (timestamps,
   per-turn state) out of the always-loaded context files, and place

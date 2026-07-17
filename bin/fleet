@@ -871,7 +871,8 @@ global_ensure_canon() {
 }
 
 # Per-pack report/wire. mode=install wires; mode=status is read-only. A pack with
-# no pack_global_setup (cursor, antigravity) prints "unsupported".
+# no pack_global_setup (copilot — it reads a repo's AGENTS.md natively) prints
+# "unsupported".
 global_report() {
   local mode="$1" canon="$2" a status d
   echo "global instructions: $canon"
