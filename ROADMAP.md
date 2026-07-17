@@ -1,4 +1,34 @@
-# Roadmap — resource management (anti-crash)
+# Roadmap
+
+Near-term priorities for agent-fleet, most urgent first. Longer-tail vetted ideas
+live in `BACKLOG.md`.
+
+## Next (most urgent)
+
+### Fleet-wide conversation-feedback routine
+A scheduled routine (see `docs/04-routines.md`) that analyzes the recorded
+conversations across **all** workers and sessions — every project, every machine —
+and turns them into method improvements, not a one-off report. Inputs: the
+`fleet chats` per-pack conversation pointers / CLI transcripts. Output: recurring
+patterns and working-method lessons (what recurs, where workers go wrong, what the
+durable instructions should have said) fed back as **proposed changes** to the
+trusted context — `AGENTS.md`, skills, global instructions — through the same
+freshness / `propose-doc-change` path a worker uses, so a lesson lands where it
+will be front-loaded next time instead of being lost in a log.
+
+Why now: the fleet already scales *work* across many sessions but has no loop that
+scales *learning* from them; every session repeats avoidable mistakes. Builds on
+`fleet chats` (the input), `docs/04` (scheduling), the freshness/proposal model
+(how a lesson lands), and the transcript-parsing groundwork in `BACKLOG.md`. Open
+design: aggregate to a per-project queue item vs a single global digest; and
+dedup so the same lesson is not re-flagged every run (keep a "seen" ledger).
+
+### MCP lean profile — finish the coverage
+`WORKER_MCP` is native on gemini/opencode (full) and claude (partial). Remaining:
+the generic CLI-agnostic mount-namespace loader for cursor/copilot/antigravity
+(designed in `BACKLOG.md`) and claude full isolation via `--strict-mcp-config`.
+
+## Resource management (anti-crash)  [mostly shipped]
 
 Context: on a small box (WSL2, ~8 GiB RAM) the fleet can freeze the host. Root
 cause is **memory, not disk**.
