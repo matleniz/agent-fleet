@@ -18,7 +18,9 @@
 # pack: $HUB is bind-mounted read-only at launch. Drive the worker via `fleet w`,
 # not a bare `copilot`. --add-dir "$HUB" lets the worker READ the hub (Copilot
 # restricts file access to the cwd by default); the ro mount is what stops writes
-# to it. Projects WITHOUT a hub skip the jail entirely.
+# to it. The jail is per ROLE (from the launch cwd): a WORKER (cwd = worktree) is
+# jailed; the COORDINATOR (launched in the hub) runs unconfined so it can write
+# the hub. Projects WITHOUT a hub skip the jail entirely.
 # shellcheck source=packs/hub-mount-ns.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/../hub-mount-ns.sh"
 

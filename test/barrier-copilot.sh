@@ -50,4 +50,10 @@ got="$( ( _fleet_hub_ro_exec bash -c 'cat "$0/DOC.md"' "$hub" ) 2>/dev/null )" \
 ( _fleet_hub_ro_exec bash -c 'echo ok > "$0/f"' "$wt" ) 2>/dev/null || fail "worktree write failed"
 [ -f "$wt/f" ] || fail "worktree file not created"
 
-echo "PASS: hub write denied (incl. shell redirect), hub read OK, worktree write OK"
+# 4. COORDINATOR role: launched IN the hub (cwd == hub) -> unconfined, CAN write
+#    it (the coordinator is the hub's writer; only a worker is jailed).
+( cd "$hub" && _fleet_hub_ro_exec bash -c 'echo COORD > "$0/coord-wrote"' "$hub" ) 2>/dev/null \
+  || fail "coordinator (cwd=hub) write failed — jailed when it should not be"
+[ -f "$hub/coord-wrote" ] || fail "coordinator write not persisted"
+
+echo "PASS: worker hub write denied (incl. shell redirect), hub read OK, worktree write OK, coordinator (cwd=hub) write OK"

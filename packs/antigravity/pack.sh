@@ -14,7 +14,9 @@
 # Instead the barrier is enforced by the OS — the shared mount-namespace jail in
 # packs/hub-mount-ns.sh (_fleet_hub_ro_exec / _fleet_userns_ro_ok), also used by
 # the copilot pack: $HUB is bind-mounted read-only at launch. Drive the worker
-# via `fleet w`, not a bare `agy`. Projects WITHOUT a hub skip the jail entirely.
+# via `fleet w`, not a bare `agy`. The jail is per ROLE (from the launch cwd):
+# a WORKER (cwd = worktree) is jailed; the COORDINATOR (launched in the hub) runs
+# unconfined so it can write the hub. Projects WITHOUT a hub skip the jail.
 # agy restricts its file tools to the workspace (cwd) like Copilot, so launch
 # also passes --add-dir "$HUB": that makes the hub READABLE by agy's own tools
 # (the same read grant the per-path packs give), while the ro mount is what still

@@ -10,14 +10,21 @@
 # driven via `fleet w`, not a bare CLI in the worktree. Requires unprivileged
 # user namespaces; pack_worker_setup probes and fails closed if absent.
 
-# Run "$@" confined so $HUB is read-only, via a bind mount remounted read-only
-# inside a private mount namespace. Fails CLOSED: if the namespace or the ro
-# remount cannot be set up, the command does NOT run (never exec the agent
-# unconfined on a hub project). No hub -> run "$@" as-is. --map-root-user grants
-# CAP_SYS_ADMIN for mount inside the userns; files the agent creates still map
-# back to the real user outside. cwd (the worktree) carries through unshare.
+# Run "$@" with the read-only-hub jail IFF this is a WORKER launch. The jail is
+# a bind mount of $HUB remounted read-only inside a private mount namespace.
+# Role is read from the launch cwd (set by the fleet core: coordinator -> the
+# hub, worker -> a worktree):
+#   - no hub configured, OR cwd IS the hub (the COORDINATOR, i.e. the hub's own
+#     writer) -> run unconfined, so launching an agent from the hub can write it;
+#   - cwd is elsewhere (a WORKER, hub external) -> jail $HUB read-only.
+# Fails CLOSED for a worker: if the namespace or the ro remount cannot be set up,
+# the command does NOT run (never exec a worker unconfined on a hub project).
+# --map-root-user grants CAP_SYS_ADMIN for mount inside the userns; files the
+# agent creates still map back to the real user outside. cwd carries through
+# unshare, so the agent launches in the worktree.
 _fleet_hub_ro_exec() {
-  [ -n "${HUB:-}" ] || exec "$@"
+  [ -n "${HUB:-}" ] || exec "$@"                              # no hub to protect
+  [ "$(pwd -P)" = "$(cd "$HUB" 2>/dev/null && pwd -P)" ] && exec "$@"  # coordinator IN the hub
   exec unshare --user --map-root-user --mount -- bash -c '
     hub=$1; shift
     mount --bind "$hub" "$hub" && mount -o remount,bind,ro "$hub" || {
