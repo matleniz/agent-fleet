@@ -43,6 +43,13 @@ instead: ntfy notifications (claude pack hooks + `bin/fleet-notify`) and
   (no standard, mid-2026); the community fallback is a state/handoff markdown
   in the worktree when switching agents. Cheap to standardize in the worker
   skills. https://wal.sh/research/2026-q2-cli-coding-agents/
+- **Web-comparison dimension for the method retro** — conversation-feedback
+  (docs/04) is deliberately local + transcript-grounded, no web. Separately, a
+  low-frequency web-enabled pass could compare our *methods* against the current
+  external state of the art (the methods analogue of the feature scan, already
+  sketched in docs/04's workflow-retro variant). It reads only committed method
+  docs + web, no private transcripts, so it fits a cloud routine. Keep it a
+  distinct routine from conversation-feedback; sources mandatory; report-only.
 
 - **Lean worker MCP profile** — SHIPPED (full, 3/3 capable CLIs). `WORKER_MCP`
   allowlist in a project `.env`, applied per worktree via the optional
