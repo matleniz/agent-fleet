@@ -5,6 +5,25 @@ live in `BACKLOG.md`.
 
 ## Next (most urgent)
 
+### Relaunch the agent in a window whose process died  [bug]
+`fleet` (coordinator) and `fleet w <name>` only ever **create OR select** their
+tmux window; they never relaunch the agent inside a window that already exists.
+Each window is created as `"<launch>; exec bash"` (`bin/fleet:376`), so when the
+agent process exits the window survives, falling back to the bare `exec bash`
+shell. On the next `fleet`, `session_window` finds the window present and takes
+the select path (`bin/fleet:375`), and `view_snippet`'s guard short-circuits it
+(`select-window … && exit 0`, `bin/fleet:355`) — so the command is a silent no-op:
+it focuses a window with a dead session instead of relaunching. The user then
+falls back to running the CLI by hand (`claude --continue`), outside the fleet's
+posture (auto mode, barrier, MCP profile). The `open_in` resume prompt only runs
+on first creation, down the `FLEET_IN_WINDOW=1` branch.
+
+Fix: before taking the select path, detect a window whose pane command is a bare
+shell (agent dead) and relaunch the agent into it — respawn the pane (or send the
+launch line) with the same resume offer `open_in` gives, instead of just
+selecting it. Applies to both the `hub` and `w <name>` windows, local and remote.
+A dead-session window should be indistinguishable from a fresh one to the user.
+
 ### Fleet-wide conversation-feedback routine  [tooling shipped; scheduling is instance-side]
 A scheduled routine (see `docs/04-routines.md`) that analyzes the recorded
 conversations across **all** workers and sessions and turns them into method
