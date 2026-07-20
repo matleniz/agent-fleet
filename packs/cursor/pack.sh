@@ -81,7 +81,12 @@ pack_global_inject() {
   local common; common="$(git -C "$dest" rev-parse --git-common-dir 2>/dev/null)" || return 0
   case "$common" in /*) ;; *) common="$dest/$common";; esac
   local excl="$common/info/exclude"
-  [ -d "$common/info" ] && { grep -qxF "$rel" "$excl" 2>/dev/null || printf '%s\n' "$rel" >> "$excl"; }
+  # `if`, not a trailing `[ ] && ...`: under the caller's set -e the && form
+  # fails this function (and with it the whole worker setup) when .git/info is
+  # absent, instead of just skipping the exclude.
+  if [ -d "$common/info" ]; then
+    grep -qxF "$rel" "$excl" 2>/dev/null || printf '%s\n' "$rel" >> "$excl"
+  fi
 }
 
 # fleet global: the cursor CLI has no machine-wide global file to wire, so this

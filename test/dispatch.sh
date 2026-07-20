@@ -96,6 +96,30 @@ case "$got" in *"--permission-mode auto"*"--continue"*|*"--continue"*"--permissi
 rm -f "$stub/claude"
 echo "PASS (layer 1c): claude interactive launch is auto mode (no bypass flag), --resume maps to --continue"
 
+# ---------- Layer 1d: launch survives `set -e` WITHOUT an MCP profile ----------
+# Production regression this pins down: bin/fleet runs `set -euo pipefail`, and
+# _claude_mcp_flags ended in `[ -f fleet-mcp.json ] && ...` — rc 1 whenever the
+# profile is absent (every hub, every worktree without WORKER_MCP), silently
+# killing the launch right before the exec. The other layers CANNOT catch this
+# class: they run pack_launch inside `( ... ) || true`, and `||` suppresses
+# set -e inside the subshell. Here the subshell is a bare statement (outer set +e,
+# rc read afterwards), so the inner set -e is genuinely active, like in fleet.
+printf '#!/usr/bin/env bash\nprintf "%%s" "$*" > "$REC"\n' > "$stub/claude"; chmod +x "$stub/claude"
+nomcp="$(mktemp -d)"   # cwd with NO .claude/fleet-mcp.json, like a hub
+for launch_call in "pack_launch" "pack_launch_headless task"; do
+  : > "$REC"
+  set +e
+  ( set -e; PATH="$stub:$PATH"; cd "$nomcp"
+    source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"
+    $launch_call )
+  rc=$?
+  set -e
+  [ "$rc" = 0 ] || fail "claude $launch_call died under set -e without an MCP profile (rc=$rc — silent-launch-death regression)"
+  [ -s "$REC" ] || fail "claude $launch_call never exec'd the CLI under set -e without an MCP profile"
+done
+rm -rf "$nomcp"; rm -f "$stub/claude"
+echo "PASS (layer 1d): claude launches survive set -e with no MCP profile (hub / no-WORKER_MCP worktree)"
+
 # ---------- Layer 2: fleet dispatch plumbing (stub pack + tmux) ----------
 if ! command -v tmux >/dev/null; then
   echo "SKIP (layer 2): tmux not installed"; exit 0

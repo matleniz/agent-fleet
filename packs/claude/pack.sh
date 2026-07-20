@@ -180,7 +180,11 @@ PY
 _claude_mcp_flags() {
   FLEET_MCP_FLAGS=()
   local mc="$PWD/.claude/fleet-mcp.json"
-  [ -f "$mc" ] && FLEET_MCP_FLAGS=(--strict-mcp-config --mcp-config "$mc")
+  # `if`, not a trailing `[ ] && ...`: fleet runs under set -e, and the && form
+  # makes this function return 1 whenever the profile is absent (every hub, and
+  # every worktree without WORKER_MCP) — killing the launch silently right
+  # before the exec.
+  if [ -f "$mc" ]; then FLEET_MCP_FLAGS=(--strict-mcp-config --mcp-config "$mc"); fi
 }
 
 pack_mcp_profile() {  # <dest> <allowlist>
