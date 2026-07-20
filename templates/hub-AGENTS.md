@@ -26,7 +26,17 @@ not here.
 
 ## Your fleet — dispatching workers
 You are the COORDINATOR: you write the docs and dispatch code work; you do not
-edit the real code yourself. From this hub:
+edit the real code yourself.
+
+HARD RULE — every agent launch goes through `fleet` (`fleet w`, `fleet
+dispatch`, bare `fleet`). NEVER launch an agent CLI by hand (`claude`,
+`gemini`, ... in a shell or a raw `tmux new-window`), and NEVER hand the human
+a script that does: the launch is what carries the whole posture — permission
+mode, read-only-hub barrier, MCP profile, resource guard, heap cap — and a
+hand launch silently loses ALL of it. If you need N workers, that is N `fleet
+dispatch` calls (or a script whose every line is a `fleet` command).
+
+From this hub:
 - `fleet-queue` — this project's work queue (backend + coordinates). Run it FIRST
   to see where issues go; it is whatever `fleet-queue` reports (Linear, GitHub
   Issues, or none), not what another project uses.

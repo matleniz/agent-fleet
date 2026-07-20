@@ -68,6 +68,12 @@ Partition by the FILES each stream writes, not by the steps of the pipeline.
 
 ## Rules
 
+- Every launch goes through `fleet` (`fleet dispatch` / `fleet w`). NEVER launch
+  an agent CLI by hand (raw `claude`/`gemini`/`tmux new-window`) and never hand
+  the human a launch script that does — the `fleet` launch carries the posture
+  (permission mode, read-only-hub barrier, MCP profile, resource guard) and a
+  hand launch silently loses all of it. A batch script is fine only if every
+  line is a `fleet` command.
 - Parallelize across independent workstreams; never split one coherent change.
 - Partition by file ownership, not by pipeline phase.
 - One stream = one issue = one worker = one branch = one PR.

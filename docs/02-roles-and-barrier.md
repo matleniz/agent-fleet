@@ -77,6 +77,17 @@ real shell/tool access **and** the read-only-hub barrier still holds. Hand-rolli
 the launch instead (e.g. `agent -p --trust`, which is not a real cursor flag) is
 what produces a worker with no shell; go through `dispatch`.
 
+More generally: **the posture rides the launch**. Permission mode, barrier, MCP
+profile, resource guard, heap cap all exist only because `fleet` applied them at
+launch time — a CLI started by hand (or by a coordinator-generated script that
+calls the CLI or raw `tmux new-window` directly) has none of them, and nothing
+flags it afterwards. The seeded hub context and the `dispatch-work` skill make
+this a hard rule for coordinators: every agent launch is a `fleet` command. The
+same trap exists on the human side via a shell alias that injects launch flags
+(an alias only fires in interactive shells, so pack launches are immune — but a
+manual relaunch in a dead window gets poisoned; see the dead-window relaunch in
+docs/07, which removes the reason to relaunch by hand at all).
+
 The node packs (claude/gemini/opencode/copilot) also call `fleet_node_heap_guard`
 in both launch paths, which exports `NODE_OPTIONS=--max-old-space-size` when
 `WORKER_NODE_MAX_MB` is set — an anti-crash rail for constrained boxes, off by
