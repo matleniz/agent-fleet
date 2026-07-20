@@ -458,10 +458,12 @@ cmd_remote() {
     w|worker)
       local name="${2:-}" base="${3:-}"
       [ -z "$name" ] && { echo "usage: fleet r w <name> [base]" >&2; exit 2; }
+      fleet_valid_name "$name" "worker name" || exit 2   # threads through tmux/ssh unquoted
       need_agent; session_window "$name" w "$name" ${base:+$base} ;;
     del)
       local name="${2:-}"
       [ -z "$name" ] && { echo "usage: fleet r del <name>" >&2; exit 2; }
+      fleet_valid_name "$name" "worker name" || exit 2   # threads through tmux/ssh unquoted
       [ "$M_LOCAL" = 1 ] && { echo "error: 'r del' targets a remote machine" >&2; exit 2; }
       ssh "$M_HOST" "docker exec $M_CONTAINER tmux kill-window -t $M_TMUX:$name 2>/dev/null; docker exec $M_CONTAINER bash -lc 'fleet --project $M_PROJECT del $name'" ;;
     broadcast)
@@ -1155,6 +1157,7 @@ cmd_machines() {
 cmd_peek() {  # fleet peek <machine> <window> — dump a session's terminal
   local mname="${1:-}" win="${2:-}"
   { [ -z "$mname" ] || [ -z "$win" ]; } && { echo "usage: fleet peek <machine> <window>" >&2; exit 2; }
+  fleet_valid_name "$win" "window name" || exit 2   # threads through ssh/docker unquoted
   fleet_load_machine "$mname" || exit 2
   if [ "$M_LOCAL" = 1 ]; then
     tmux capture-pane -p -t "$M_TMUX:$win" 2>/dev/null \
@@ -1169,6 +1172,7 @@ cmd_send() {  # fleet send <machine> <window> "<text>" — type text+Enter
   local mname="${1:-}" win="${2:-}"; shift 2 2>/dev/null || true
   local text="$*"
   { [ -z "$mname" ] || [ -z "$win" ] || [ -z "$text" ]; } && { echo "usage: fleet send <machine> <window> \"<text>\"" >&2; exit 2; }
+  fleet_valid_name "$win" "window name" || exit 2   # threads through ssh/docker unquoted
   fleet_load_machine "$mname" || exit 2
   if [ "$M_LOCAL" = 1 ]; then
     tmux send-keys -t "$M_TMUX:$win" "$text" Enter && echo "sent to $mname:$win"
