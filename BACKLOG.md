@@ -35,10 +35,16 @@ instead: ntfy notifications (claude pack hooks + `bin/fleet-notify`) and
   decides (LLM judges have a documented selection gap, arxiv 2603.12520).
   Proof: Cursor 2.2 multi-agent judging; DIY worktree fan-outs.
   https://forum.cursor.com/t/cursor-2-2-multi-agent-judging/145826
-- **Quality gates at merge time** — a per-pack hook that blocks PR/merge until
-  tests pass (the barrier protects the hub; this protects main). Proof:
-  agent-dashboard's commit-lint/test gates; Claude agent-teams TaskCompleted
-  hooks (exit 2 blocks). https://github.com/bjornjee/agent-dashboard
+- **Quality gates at merge time** — SHIPPED as `fleet gate` (2026-07-20), a
+  pre-PR gate rather than a per-pack merge hook: the project declares its
+  checks in `GATE_CMDS` (its .env), the worker runs them in one shot before the
+  PR (`resolve-finding` step 5), auto-fixes apply mechanically, only residual
+  failures escalate to the model. CLI-agnostic (no per-pack hook needed) and
+  dep-free (no linter bundled; no GATE_CMDS = no-op). The original per-pack
+  merge-blocking hook variant was not built — the pre-PR shape covers the need
+  without a hook per CLI. Original proof points: agent-dashboard's
+  commit-lint/test gates; Claude agent-teams TaskCompleted hooks (exit 2
+  blocks). https://github.com/bjornjee/agent-dashboard
 - **HANDOFF.md convention** — cross-CLI session portability does not exist
   (no standard, mid-2026); the community fallback is a state/handoff markdown
   in the worktree when switching agents. Cheap to standardize in the worker

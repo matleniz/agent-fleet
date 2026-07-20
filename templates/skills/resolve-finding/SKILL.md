@@ -34,8 +34,13 @@ Run `fleet-queue` for this project's queue backend:
 4. **Fix**, following the repo's conventions (its context file — `AGENTS.md` or
    `CLAUDE.md`: language, deps, where reusable code goes, no hardcoded config).
    Keep the change minimal and scoped to the finding.
-5. **Test.** Run the relevant tests. For a security fix, add a **regression test**
-   that proves the exploit is now blocked.
+5. **Test.** Run `fleet gate` first: it runs the project's declared checks
+   (`GATE_CMDS` in its fleet config) in one shot — auto-fixes apply mechanically
+   inside it, and it prints only the residual findings (the failing check +
+   its file:line output). Fix those and re-run until it passes; commit any files
+   the gate notes as auto-fixed. It is a no-op when the project declares no
+   checks. Then run the tests relevant to your change. For a security fix, add a
+   **regression test** that proves the exploit is now blocked.
 6. **Docs = part of "done".** If the fix changes a behavior the hub describes (an
    endpoint, flag, schema, architecture fact, or security posture), file a
    `type:doc-proposal` via `propose-doc-change` (it routes by QUEUE_KIND; for

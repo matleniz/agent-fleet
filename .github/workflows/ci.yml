@@ -42,7 +42,7 @@ jobs:
       - name: Run the test suite
         run: |
           set -euo pipefail
-          for t in test/docs-sync.sh test/test-context.sh test/test-guard.sh \
+          for t in test/docs-sync.sh test/gate.sh test/test-context.sh test/test-guard.sh \
                    test/test-chats-scan.sh test/test-feedback-pipeline.sh \
                    test/global.sh test/test-mcp-profile.sh \
                    test/dispatch.sh test/relaunch.sh \

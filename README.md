@@ -157,6 +157,9 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet status --remote  # also gather VM sessions over ssh (default: local only)
    fleet context          # what an agent auto-reads at launch, per role + ~tokens
    fleet context --json --budget 3000  # machine-readable; exit non-zero if over budget
+   fleet gate             # run the project's declared pre-PR checks (GATE_CMDS in
+                          #   its .env): auto-fixes apply mechanically, only residual
+                          #   failures print; no-op if the project declares none
    fleet peek local hub   # dump a session's terminal   ·   fleet send local hub "y"
    fleet del my-task      # remove one (guarded)  ·  fleet prune  = all merged ones
    fleet agents / doctor  # enabled packs / installed+logged status per pack

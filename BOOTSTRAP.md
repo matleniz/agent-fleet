@@ -35,7 +35,10 @@ Then propose, and wait for my approval before touching anything:
    .agents/skills/). OMIT --code to scaffold from scratch: a base-commit repo
    ~/<name> pushed to a new private GitHub repo, a seeded+committed hub
    ~/<name>-hub pushed to a private <owner>/<name>-hub, and queue defaulting to
-   github (needs the gh CLI).
+   github (needs the gh CLI). Optionally declare the project's pre-PR checks in
+   its .env (GATE_CMDS, one command per line, auto-fix flags included): workers
+   then run `fleet gate` before opening a PR, and only residual failures reach
+   the model.
 3. Confirm the config-driven skills are installed globally once (propose-doc-change,
    resolve-finding, and dispatch-work in ~/.agents/skills/, with per-skill symlinks
    in ~/.claude/skills/ for Claude Code); they are generic and read my project's

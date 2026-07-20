@@ -92,6 +92,22 @@ The productive version is a **structured contract** (a schema, a labeled issue):
 the terseness of a fixed format without the ambiguity of compressed prose. Apply
 terseness to output and to structured handoffs, not to inter-agent prose.
 
+## The deterministic gate: fix mechanically, escalate the residual
+
+A worker that runs its project's checks by hand pays model tokens three times:
+deciding which checks to run, reading full tool output (most of it fixable
+noise), and iterating fix-by-fix. `fleet gate` collapses that into one tool
+call. The project declares its checks once (`GATE_CMDS` in its fleet config,
+one command per line, auto-fix flags included — the fleet bundles no linter and
+stays dep-free); the gate runs them all, lets the auto-fixes repair the fixable
+noise at **zero** model cost, suppresses the output of everything that passes,
+and prints back only the residual: which check failed and its own file:line
+findings, capped so a failing test run cannot dump a full log into the window.
+The model spends tokens only on what actually needs judgment. This is the same
+schema-over-prose logic as the queue ([03](03-queue.md)): a fixed, mechanical
+contract at the handoff instead of open-ended model work. A project that
+declares no checks pays nothing — the gate is a no-op.
+
 ## Operational levers checklist
 
 State-of-the-art practice (checked mid-2026) adds four levers the model above

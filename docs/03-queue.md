@@ -70,8 +70,10 @@ Two skills sit on this pipeline:
 - `propose-doc-change` (worker side): from a worktree, file a doc change as a
   queue issue instead of editing the hub.
 - `resolve-finding` (worker side): take one issue, verify it against the code,
-  branch, fix, test with a regression, open a PR, update the issue. Out-of-scope
-  work (someone else's area, an infra repo) is handed back, not forced.
+  branch, fix, run the project's declared checks in one shot (`fleet gate`,
+  no-op if none are declared — see [06](06-token-economy.md)), test with a
+  regression, open a PR, update the issue. Out-of-scope work (someone else's
+  area, an infra repo) is handed back, not forced.
 
 On the coordinator side, two skills:
 

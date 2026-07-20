@@ -11,6 +11,14 @@ Unreleased until the first one.
 ## [Unreleased]
 
 ### Added
+- `fleet gate` — the project-declared pre-PR validation gate. A project lists
+  its checks in `GATE_CMDS` (its .env, one shell command per line, auto-fix
+  flags included); a worker runs them all in one shot before opening a PR
+  (`resolve-finding` step 5). Auto-fixes apply mechanically at zero model cost;
+  passing checks print nothing; only residual failures (the failing command +
+  its own output, capped at 200 lines) escalate to the model. Dep-free: the
+  fleet bundles no linter, and a project with no `GATE_CMDS` gets a no-op.
+  E2E: `test/gate.sh` (no-op / pass / fail / auto-fix note / truncation).
 - Conversation-feedback is now a 3-stage pipeline (docs/04 "The conversation-feedback
   pipeline"): A extract (deterministic), B compress (new `conversation-compress`
   skill — cheap model, frequent, LOCAL; one session note per transcript under

@@ -69,6 +69,10 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
   refresh [<name>]     re-run enabled packs' worker setup (one worktree, or all)
   add-agent <pack>     enable a pack for this project, then refresh worktrees
   agents               enabled packs for this project (default first)
+  gate                 run the project's declared pre-PR checks (GATE_CMDS in
+                       the .env, one command per line): auto-fixes run inside
+                       the commands, only what still fails is printed. No
+                       GATE_CMDS = no-op. Workers run it before opening a PR.
   chats [<worker>]     per-pack pointer to the conversation recorded in the
                        worktree (bare = the hub/coordinator); read it to reprise
                        a dead/other agent's session (transcripts are not portable)
@@ -110,7 +114,7 @@ if [ -z "$sub" ]; then
       case "${1:-}" in -h|--help|"") exec "$SELF_DIR/fleet-init" ;; esac
       exec "$SELF_DIR/fleet-init" "$@" ;;
     ""|hub) sub="hub"; [ $# -gt 0 ] && shift ;;
-    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|chats|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|feedback|peek|send|_dispatch-run)
+    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|chats|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|feedback|peek|send|_dispatch-run)
       sub="$1"; [ "$sub" = worker ] && sub=w; [ "$sub" = remote ] && sub=r; shift ;;
     -*) echo "error: unknown option '$1'" >&2; exit 2 ;;
     *)
@@ -689,6 +693,48 @@ cmd_add_agent() {
   if [ -n "${CODE_REPO:-}" ] && [ -n "${WT_HOME:-}" ]; then
     cmd_refresh
   fi
+}
+
+# fleet gate: run the project's declared pre-PR checks (GATE_CMDS in the .env,
+# one shell command per line). The fleet bundles no linter and knows no tool:
+# auto-fixing lives inside the commands the project declares (e.g. a lint
+# command with its --fix flag), so fixable noise is repaired mechanically with
+# zero model tokens, and only what still fails is printed — the residual a
+# model actually has to think about (docs/06). No GATE_CMDS = no-op, so the
+# gate costs nothing to projects that never declare one.
+cmd_gate() {
+  if [ -z "${GATE_CMDS:-}" ]; then
+    echo "gate: no checks declared (GATE_CMDS unset in $(basename "$CONF")) — nothing to gate"
+    return 0
+  fi
+  # Run from the repo root when inside one, so path-relative checks cover the
+  # whole tree regardless of the subdir the session invoked the gate from.
+  local root; root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  local before after; before="$(git -C "$root" status --porcelain 2>/dev/null || true)"
+  local line total=0 failed=0 rc out nlines
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    case "$line" in ""|\#*) continue ;; esac
+    total=$((total + 1))
+    rc=0; out="$(cd "$root" && bash -c "$line" 2>&1)" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      echo "gate: ok    $line"
+    else
+      failed=$((failed + 1))
+      echo "gate: FAIL  $line   (rc=$rc)"
+      # Bounded escalation: the check's own findings (file:line), not a log dump.
+      echo "$out" | head -n 200
+      nlines="$(printf '%s\n' "$out" | wc -l)"
+      [ "$nlines" -gt 200 ] && echo "gate: … output truncated ($nlines lines; re-run for the rest: $line)"
+    fi
+  done <<< "$GATE_CMDS"
+  after="$(git -C "$root" status --porcelain 2>/dev/null || true)"
+  [ "$before" != "$after" ] && echo "gate: note — checks modified files (auto-fixes); include them in your commit"
+  if [ "$failed" -gt 0 ]; then
+    echo "gate: FAIL — $failed/$total check(s) failed; fix the findings above and re-run 'fleet gate'"
+    return 1
+  fi
+  echo "gate: PASS — $total/$total check(s) passed"
 }
 
 cmd_agents() {
@@ -1300,6 +1346,7 @@ case "$sub" in
   refresh)     cmd_refresh "${1:-}" ;;
   add-agent)   cmd_add_agent "${1:-}" ;;
   agents)      cmd_agents ;;
+  gate)        cmd_gate ;;
   chats)       cmd_chats "$@" ;;
   doctor)      cmd_doctor "$@" ;;
   sync-remote) cmd_sync_remote "${1:-}" ;;

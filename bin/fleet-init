@@ -281,6 +281,12 @@ fi
     echo "QUEUE_GITHUB_REPO=\"${ghrepo:-}\""
   fi
   echo
+  echo "# Pre-PR validation gate (optional): checks a worker runs via \`fleet gate\`"
+  echo "# before opening a PR — one shell command per line, auto-fix flags included."
+  echo "# Unset = no-op. See templates/fleet.env + docs/06 in the agent-fleet repo."
+  echo '# GATE_CMDS="ruff check --fix .'
+  echo '# pytest -q"'
+  echo
   echo "# Resource guard rails (fleet refuses dispatch/w past a limit; 0 = off,"
   echo "# built-ins 6/2048/5120, per-machine override in machines/<name>.env)."
   echo "# MAX_WORKERS=6"
