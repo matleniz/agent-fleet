@@ -143,6 +143,29 @@ Follow-up fixes (2026-07-20):
   against the installed CLI), so any cwd with a `.`/`_` missed its sessions
   silently — now `_claude_proj_slug`. Test: `test/test-claude-resume.sh`.
 
+### Three-way launch prompt: (c)ontinue / (r)esume / (n)ew  [enhancement]
+Today `open_in` (`bin/fleet`) offers a binary `(r)esume last / (n)ew? [R/n]`,
+where resume auto-picks the last interactive session (see the resume fix above).
+That auto-pick has a residual gap: it can't reach an OLDER session, and if the
+last interactive session is itself still running claude refuses `--resume` on it.
+Give the operator all three:
+- **c (continue)** — the current fast path: resume the last real interactive
+  session automatically (`_claude_last_session_id` → `--resume <id>`, skipping
+  bg/aborted; fallback `--continue`). This stays the default (Enter = c).
+- **r (resume)** — hand off to the CLI's own session PICKER over ALL sessions
+  (`claude --resume` with no id → interactive picker with titles/search), so the
+  operator can reach any past session, including older ones, and the CLI itself
+  handles which are running/background. No guessing on our side.
+- **n (new)** — fresh session (unchanged).
+
+Design notes: the prompt lives in `open_in` (generic), but the two resume modes
+map to different CLI invocations, so the pack contract needs a way to express
+"continue-last" vs "open the picker" — extend `pack_launch` to take a mode
+(e.g. `--continue` vs `--pick`) instead of today's single `--resume`, and let
+packs whose CLI has no picker fall back to continue-last for both. Keep it
+generic across packs (gemini/opencode have their own session concepts). Update
+`test/test-claude-resume.sh` + the layer 1c assertion in `test/dispatch.sh`.
+
 ### Fleet-wide conversation-feedback routine  [tooling shipped; scheduling is instance-side]
 A scheduled routine (see `docs/04-routines.md`) that analyzes the recorded
 conversations across **all** workers and sessions and turns them into method
