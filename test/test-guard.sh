@@ -123,6 +123,66 @@ eq "appends, preserves existing"     "$(heap '--enable-source-maps' 512 0)" "--e
 eq "keeps caller's own cap"          "$(heap '--max-old-space-size=256' 4096 0)" "--max-old-space-size=256"
 eq "non-numeric -> off"              "$(heap '' abc 0)"     ""
 
+
+# ---- 5. admission lock closes the probe-then-create race (S4) ------------
+# fleet_guard alone only decides; without a lock spanning probe->create, N
+# near-simultaneous callers can all probe the same pre-create count and all
+# pass (see fleet_guard_lock's comment in fleet-config.sh). These tests never
+# touch the real ~/.config/fleet — FLEET_HOME is the mktemp -d dir set up at
+# the top of this script, and the lockfile (FLEET_GUARD_LOCKFILE, defaulted
+# from FLEET_ROOT) lives under it.
+echo "[5] admission lock (fleet_guard_lock/fleet_guard_unlock)"
+
+# 5a. Low-level: a held lock blocks a short-timeout second acquire; once
+# released, a third acquire succeeds immediately.
+force="" FLEET_NO_GUARD=""
+(
+  fleet_guard_lock >/dev/null 2>&1 || exit 1
+  sleep 1
+  fleet_guard_unlock
+) &
+holder=$!
+sleep 0.2   # give the holder time to grab the lock first
+FLEET_GUARD_LOCK_TIMEOUT=0.3 fleet_guard_lock 2>/dev/null
+eq "contended acquire times out (rc=2) while held" "$?" "2"
+wait "$holder"
+fleet_guard_lock 2>/dev/null
+eq "acquire succeeds once the holder released" "$?" "0"
+fleet_guard_unlock
+
+# 5b. Full scenario: MAX_WORKERS=1, a shared counter stands in for
+# guard_probe's live-window count (it only advances on "create", exactly like
+# a real tmux window only counting once it exists). N attempts race
+# fleet_guard_lock -> fleet_guard -> create(+1) -> fleet_guard_unlock
+# concurrently as REAL background processes (&): the lock must serialize them
+# so exactly one is admitted, no matter how many launch at once.
+echo "[5b] MAX_WORKERS=1, 5 concurrent create attempts -> exactly 1 admitted"
+COUNTER="$TMP/live-count"; echo 0 > "$COUNTER"
+RESULTS="$TMP/attempt-results.log"; : > "$RESULTS"
+guard_probe() { echo "$(cat "$COUNTER") 8000 50000"; }
+M_NAME=test M_LOCAL=1 M_MAX_WORKERS=1 M_MIN_FREE_MB=0 M_MIN_FREE_DISK_MB=0
+
+attempt_create() {
+  local id="$1"
+  if ! fleet_guard_lock 2>/dev/null; then echo "lock-timeout $id" >> "$RESULTS"; return; fi
+  if fleet_guard 2>/dev/null; then
+    sleep 0.1   # the real gap between "admitted" and the window actually existing
+    local c; c="$(cat "$COUNTER")"
+    echo "$((c + 1))" > "$COUNTER"
+    fleet_guard_unlock
+    echo "admit $id" >> "$RESULTS"
+  else
+    fleet_guard_unlock
+    echo "refuse $id" >> "$RESULTS"
+  fi
+}
+
+for i in 1 2 3 4 5; do attempt_create "$i" & done
+wait
+admits="$(grep -c '^admit ' "$RESULTS")"
+eq "exactly one attempt admitted"        "$admits" "1"
+eq "live-count landed on MAX_WORKERS (1)" "$(cat "$COUNTER")" "1"
+
 echo
 echo "guard tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -459,3 +459,74 @@ fleet_guard() {
   } >&2
   return 2
 }
+
+# ---- admission lock (S4: probe-then-create race) --------------------------
+# fleet_guard() above only PROBES and DECIDES; the actual tmux window (and,
+# behind it, the worktree) is created by the CALLER — cmd_worker / cmd_dispatch
+# in bin/fleet — well after fleet_guard returns. guard_probe only ever sees a
+# worker once its window exists, so a lock living solely inside fleet_guard
+# would protect nothing: N near-simultaneous `fleet w` / `fleet dispatch` calls
+# can all probe the same pre-create count, all pass, and all create — exactly
+# the over-MAX_WORKERS host-freeze the guard exists to stop. The fix is a lock
+# that spans probe -> admit -> create, acquired by the CALLER before
+# fleet_guard and released only once the new window actually exists.
+#
+# One lockfile per machine's config root (not per-project): MAX_WORKERS/RAM/
+# disk are machine-wide (guard_probe sums every fleet* tmux session on the
+# box), so the lock has to be too — a project-scoped lock would let two
+# projects on the same machine each admit past the shared limit through their
+# own lock.
+#
+# flock is util-linux and present on this repo's Linux/WSL2 targets (see
+# AGENTS.md). If it's ever missing, degrade to the pre-fix (unlocked) behavior
+# with a one-time warning rather than crash a launch over a portability gap.
+FLEET_GUARD_LOCKFILE="${FLEET_GUARD_LOCKFILE:-$FLEET_ROOT/.guard.lock}"
+FLEET_GUARD_LOCK_TIMEOUT="${FLEET_GUARD_LOCK_TIMEOUT:-10}"  # seconds; never wait forever
+_FLEET_GUARD_FD=""   # set by fleet_guard_lock while held; read by fleet_guard_unlock
+
+# Acquire the admission lock. No-op (no fd held) on the same bypass paths as
+# fleet_guard itself (--force / FLEET_NO_GUARD=1) — nothing to serialize when
+# there is no admission decision to protect — and when flock is unavailable.
+# Returns 2 (and explains on stderr) on a real acquire timeout, same
+# convention as fleet_guard, so callers can `fleet_guard_lock || exit 2` alike.
+# A caller that then hits any other error and exits releases the lock for free
+# (closing the fd on process exit drops the flock — see flock(1) NOTES); the
+# explicit fleet_guard_unlock below is only needed on paths that keep running.
+fleet_guard_lock() {
+  [ -n "${force:-}" ] && return 0
+  [ "${FLEET_NO_GUARD:-}" = 1 ] && return 0
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "warning: [fleet-guard] flock not found — admission is unprotected against concurrent launches (S4)" >&2
+    return 0
+  fi
+  mkdir -p "$(dirname "$FLEET_GUARD_LOCKFILE")" 2>/dev/null || true
+  # {varname} is bash's dynamic-fd redirection: opens the file and stores the
+  # allocated descriptor number in _FLEET_GUARD_FD (a global, not `local`), so
+  # it survives past this function for fleet_guard_unlock / the caller to use.
+  # shellcheck disable=SC2261  # dynamic fd var, not a stray extra redirect
+  exec {_FLEET_GUARD_FD}>"$FLEET_GUARD_LOCKFILE" || {
+    echo "error: [fleet-guard] cannot open lockfile $FLEET_GUARD_LOCKFILE" >&2
+    _FLEET_GUARD_FD=""
+    return 2
+  }
+  if ! flock -w "$FLEET_GUARD_LOCK_TIMEOUT" "$_FLEET_GUARD_FD"; then
+    echo "error: [fleet-guard] timed out after ${FLEET_GUARD_LOCK_TIMEOUT}s waiting for the admission lock ($FLEET_GUARD_LOCKFILE)" >&2
+    echo "  another worker/dispatch create is in progress; retry shortly." >&2
+    exec {_FLEET_GUARD_FD}>&-
+    _FLEET_GUARD_FD=""
+    return 2
+  fi
+  return 0
+}
+
+# Release the lock fleet_guard_lock acquired. Safe (a no-op) when nothing is
+# held — the bypass paths above, flock missing, or simply called again — so
+# shared helpers (e.g. bin/fleet's session_window, called both with a lock
+# held by cmd_worker and without one by cmd_hub/cmd_remote) can call it
+# unconditionally.
+fleet_guard_unlock() {
+  [ -n "$_FLEET_GUARD_FD" ] || return 0
+  flock -u "$_FLEET_GUARD_FD" 2>/dev/null || true
+  exec {_FLEET_GUARD_FD}>&- 2>/dev/null || true
+  _FLEET_GUARD_FD=""
+}
