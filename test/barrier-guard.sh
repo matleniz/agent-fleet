@@ -39,8 +39,20 @@ expect 2 "hub notebook_path blocked"   "$hub" "{\"tool_input\":{\"notebook_path\
 expect 0 "worktree file allowed"       "$hub" "{\"tool_input\":{\"file_path\":\"$wt/code.py\"}}"
 expect 0 "prefix-sibling NOT blocked"  "$hub" "{\"tool_input\":{\"file_path\":\"$sib/DOC.md\"}}"
 expect 0 "no hub configured -> allow"  ""     "{\"tool_input\":{\"file_path\":\"$hub/DOC.md\"}}"
-expect 0 "malformed JSON -> fail open" "$hub" "not json at all"
+expect 2 "malformed JSON -> fail closed" "$hub" "not json at all"
 expect 0 "no target path -> allow"     "$hub" "{\"tool_input\":{}}"
+
+# --- symlink bypass (S1): a literal path outside the hub that resolves,
+# via a symlink, to a file inside it must still be blocked ---
+symlinked_file="$hub/symlinked.md"
+: > "$symlinked_file"
+file_link="$wt/link-to-hub-file.md"
+ln -s "$symlinked_file" "$file_link"
+expect 2 "symlink to hub file blocked" "$hub" "{\"tool_input\":{\"file_path\":\"$file_link\"}}"
+
+dir_link="$wt/link-to-hub-dir"
+ln -s "$hub" "$dir_link"
+expect 2 "symlinked dir + subpath blocked" "$hub" "{\"tool_input\":{\"file_path\":\"$dir_link/sousfichier.md\"}}"
 
 # --- hub via \$HUB env instead of argv (packs may rely on either) ---
 got=0

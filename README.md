@@ -55,8 +55,11 @@ packs (claude, gemini, opencode, cursor) it blocks the standard edit tools; a
 shell redirect can still reach the hub, so the guarantee there is "the edit paths
 are blocked and the rule is explicit", not "write-proof". The mount-namespace
 packs (antigravity, copilot) are write-proof: the hub is bind-mounted read-only,
-shell included, which is why the always-on VM uses that hardening. Full detail
-and the residual hole are in
+shell included, which is why the always-on VM uses that hardening. A symlink
+bypass (a worktree symlink pointing into the hub) is closed for claude/gemini
+(their shared guard resolves real paths before comparing) but remains a caveat
+for opencode/cursor, whose rules match the literal path argument. Full detail
+and the residual holes are in
 [docs/02](docs/02-roles-and-barrier.md#the-barrier-read-this-it-is-subtle).
 
 ## Why it saves tokens
