@@ -258,6 +258,14 @@ cmd_worker() {
   # machine where it lives (so a remote-only project needs no local clone).
   if [ -z "${FLEET_IN_WINDOW:-}" ]; then
     target_machine
+    # Admission is probe-then-create (S4): fleet_guard only checks the count;
+    # session_window (below) is what actually creates the tmux window future
+    # probes will see. Hold the admission lock across both, so two
+    # near-simultaneous `fleet w` calls can't both read the same pre-create
+    # count and both pass. session_window releases it right after the window
+    # exists, before attaching the view — never held through an interactive
+    # attach (see fleet_guard_unlock there and in fleet-config.sh).
+    fleet_guard_lock || exit 2
     fleet_guard || exit 2   # refuse if this machine is at its worker/RAM/disk limit
     session_window "$name" w "$name" ${base:+$base}
   fi
@@ -415,6 +423,13 @@ session_window() {  # <win> <fleet args...>
   if [ "$M_LOCAL" = 1 ]; then
     command -v tmux >/dev/null || { echo "error: tmux not installed (needed for sessions)" >&2; exit 2; }
     bash -c "$ensure"
+    # Window exists now (created or reused) — release the admission lock (S4;
+    # see fleet_guard_lock/fleet_guard_unlock in fleet-config.sh) if cmd_worker
+    # took one. A no-op when nothing is held (cmd_hub/cmd_remote call
+    # session_window without ever locking). This MUST happen before the view
+    # attach below, which can block for as long as the operator stays
+    # attached — the lock must never live that long.
+    fleet_guard_unlock
     local snip; snip="$(view_snippet "$M_TMUX" "$win")"
     exec bash -c "$snip"
   else
@@ -422,6 +437,13 @@ session_window() {  # <win> <fleet args...>
     local b64e b64v
     b64e="$(printf '%s' "$ensure" | base64 | tr -d '\n')"
     b64v="$(view_snippet "$M_TMUX" "$win" | base64 | tr -d '\n')"
+    # Same release as the local branch above, but ensure+view run together in
+    # one ssh call here, so we can't unlock strictly between window-creation
+    # and attach — release before issuing it. This narrows (does not fully
+    # close) the S4 window for `fleet w` against a REMOTE machine; `fleet
+    # dispatch` (cmd_dispatch) closes it fully there because it recurses into
+    # the remote box's own `fleet` process, which takes ITS OWN lock.
+    fleet_guard_unlock
     exec ssh -t "$M_HOST" "docker exec -it $M_CONTAINER bash -lc 'echo $b64e | base64 -d | bash; echo $b64v | base64 -d | bash'"
   fi
 }
@@ -871,7 +893,14 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [ba
   # --- local dispatch -------------------------------------------------------
   need_code_repo
   # Guard rail: check this box's limits before spawning another worker (this is
-  # the fan-out path that OOMs a box).
+  # the fan-out path that OOMs a box). Locked probe->admit->create (S4): the
+  # window this dispatch starts only counts toward guard_probe once tmux
+  # new-window below runs, so the lock spans from here through that call.
+  # Any exit before then (guard refusal, missing tmux/pack, failed worktree
+  # create) releases it for free — closing the fd on process exit drops the
+  # flock (flock(1) NOTES) — so only the success path needs an explicit
+  # fleet_guard_unlock, right after the window is created.
+  fleet_guard_lock || exit 2
   fleet_guard || exit 2
   command -v tmux >/dev/null || { echo "error: dispatch needs tmux (detached worker window)" >&2; exit 2; }
   # The pack must support a headless launch (all bundled packs do).
@@ -902,6 +931,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [ba
   tmux kill-window -t "$LT:$name" 2>/dev/null || true   # replace any stale window
   tmux new-window -t "$LT" -n "$name" \
     "$run; echo; echo '[worker $name exited — window kept for inspection; Ctrl-b & to close]'; exec bash"
+  fleet_guard_unlock   # window exists now (S4) — safe to admit the next dispatch
   echo "dispatched: worker '$name' ($agent, headless${model:+, model=$model}) -> tmux $LT:$name"
   echo "  monitor : fleet ls   ·   watch: fleet attach   ·   block: fleet wait $name"
 }
