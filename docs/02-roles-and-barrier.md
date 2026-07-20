@@ -239,6 +239,24 @@ jail has no such hole — the read-only mount blocks shell redirects too — so
 where write-proofing matters (the VM), the same filesystem-level hardening
 (read-only bind mount) is the answer for every pack.
 
+A second, narrower hole was a symlink bypass: a symlink created in the worktree
+and pointing at a file (or directory) inside the hub has a literal path that is
+neither the hub nor under it, so a check on the literal path lets the write
+through while the write itself follows the link into the hub. This is now
+**closed for claude and gemini**: `hub-readonly-guard.py`, their shared
+PreToolUse/BeforeTool guard, resolves both the hub and the candidate path with
+`os.path.realpath` (not `abspath`) before comparing, so a symlink into the hub
+resolves to the hub and gets blocked. It **remains open for opencode and
+cursor** — their barrier is declarative permission rules matching the *literal*
+path argument in the tool call (no symlink resolution), so a symlink created in
+the worktree and pointing into the hub still gets past both. Treat this as a
+caveat of those two packs specifically, not a fixed gap.
+
+`hub-readonly-guard.py` is also fail-closed on unreadable input: if a hub is
+configured but stdin is not parseable JSON, it exits 2 (block) instead of 0,
+since malformed input at that point is abnormal, not an unrelated tool call —
+only "no hub configured" still exits 0, because there is nothing to protect.
+
 Unrelated to the barrier, a pack may also define an optional `pack_global_setup`
 — how that CLI is pointed at the one canonical per-user instructions file for
 `fleet global` (Claude `@import`, opencode symlink, Gemini + Antigravity share

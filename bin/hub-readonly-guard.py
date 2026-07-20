@@ -17,18 +17,24 @@ import os
 hub = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("HUB", "")
 if not hub:
     sys.exit(0)  # no hub configured: nothing to protect
-HUB = os.path.abspath(os.path.expanduser(hub))
+HUB = os.path.realpath(os.path.expanduser(hub))
 
 try:
     data = json.load(sys.stdin)
 except Exception:
-    sys.exit(0)  # fail open: never break unrelated tool calls
+    # A hub IS configured at this point (see the check above), so unreadable
+    # stdin is abnormal, not an unrelated tool call: fail closed.
+    sys.stderr.write(
+        "hub-readonly-guard: could not parse tool-call JSON on stdin; "
+        "failing closed (blocking) since a hub is configured.\n"
+    )
+    sys.exit(2)
 
 ti = data.get("tool_input", {}) or {}
 paths = [ti[k] for k in ("file_path", "path", "notebook_path") if isinstance(ti.get(k), str)]
 
 def under_hub(p):
-    ap = os.path.abspath(os.path.expanduser(p))
+    ap = os.path.realpath(os.path.expanduser(p))
     return ap == HUB or ap.startswith(HUB + os.sep)
 
 if any(under_hub(p) for p in paths):
