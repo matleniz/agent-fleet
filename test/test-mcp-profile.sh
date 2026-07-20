@@ -61,13 +61,13 @@ rm -rf "$d" "$h"
 
 echo "[claude] launch injects --strict-mcp-config only when a profile exists"
 d="$(mktemp -d)"; mkdir -p "$d/.claude"; printf '{"mcpServers":{}}' > "$d/.claude/fleet-mcp.json"
-out="$( cd "$d"; source "$REPO/packs/claude/pack.sh"; _claude_mcp_flags; printf '%s' "${FLEET_MCP_FLAGS[*]}" )"
+out="$( cd "$d" || exit; source "$REPO/packs/claude/pack.sh"; _claude_mcp_flags; printf '%s' "${FLEET_MCP_FLAGS[*]}" )"
 case "$out" in
   *--strict-mcp-config*--mcp-config*) ok "strict flags injected when profile present" ;;
   *) bad "expected strict flags, got: '$out'" ;;
 esac
 d2="$(mktemp -d)"
-out2="$( cd "$d2"; source "$REPO/packs/claude/pack.sh"; _claude_mcp_flags; printf '%s' "${FLEET_MCP_FLAGS[*]}" )"
+out2="$( cd "$d2" || exit; source "$REPO/packs/claude/pack.sh"; _claude_mcp_flags; printf '%s' "${FLEET_MCP_FLAGS[*]}" )"
 [ -z "$out2" ] && ok "no flags when no profile (opt-in preserved)" || bad "expected empty, got: '$out2'"
 rm -rf "$d" "$d2"
 
