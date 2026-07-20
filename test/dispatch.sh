@@ -81,7 +81,9 @@ echo "PASS (layer 1b): claude adds --model only when a model is given"
 # ---------- Layer 1c: claude INTERACTIVE launch posture (workers + coordinator) ----------
 # pack_launch must carry auto mode too — the org's managed settings silently
 # downgrade --dangerously-skip-permissions to prompting (every write denied), so
-# that flag must never come back on ANY launch path. --resume maps to --continue.
+# that flag must never come back on ANY launch path. --resume resolves the last
+# REAL session by id (see test-claude-resume.sh); with NO prior session it falls
+# back to --continue — the empty-HOME below pins that deterministic fallback.
 printf '#!/usr/bin/env bash\nprintf "%%s" "$*" > "$REC"\n' > "$stub/claude"; chmod +x "$stub/claude"
 : > "$REC"
 ( PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"; pack_launch ) || true
@@ -89,12 +91,13 @@ got="$(cat "$REC" 2>/dev/null || true)"
 case "$got" in *"--permission-mode auto"*) ;; *) fail "claude interactive: missing '--permission-mode auto' (got: $got)";; esac
 case "$got" in *"dangerously"*) fail "claude interactive: bypass flag is back (got: $got)";; *) ;; esac
 : > "$REC"
-( PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"; pack_launch --resume ) || true
-got="$(cat "$REC" 2>/dev/null || true)"
+emptyhome="$(mktemp -d)"   # no ~/.claude sessions here -> --resume falls back to --continue
+( HOME="$emptyhome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"; pack_launch --resume ) || true
+got="$(cat "$REC" 2>/dev/null || true)"; rm -rf "$emptyhome"
 case "$got" in *"--permission-mode auto"*"--continue"*|*"--continue"*"--permission-mode auto"*) ;; \
-  *) fail "claude interactive --resume: expected auto mode + --continue (got: $got)";; esac
+  *) fail "claude interactive --resume: expected auto mode + --continue fallback (got: $got)";; esac
 rm -f "$stub/claude"
-echo "PASS (layer 1c): claude interactive launch is auto mode (no bypass flag), --resume maps to --continue"
+echo "PASS (layer 1c): claude interactive launch is auto mode (no bypass flag), --resume falls back to --continue with no prior session"
 
 # ---------- Layer 1d: launch survives `set -e` WITHOUT an MCP profile ----------
 # Production regression this pins down: bin/fleet runs `set -euo pipefail`, and

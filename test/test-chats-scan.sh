@@ -44,7 +44,10 @@ EOF
 # worktree, so the scan finds a coordinator entry and a worker entry.
 mk_transcript() {  # <dir> <session-id>
   local slug d
-  slug="$(printf '%s' "$1" | sed 's#/#-#g')"
+  # Claude Code's real slug: every non-alphanumeric char -> '-' (not just '/').
+  # Must match packs/claude/pack.sh _claude_proj_slug, or a mktemp path (which
+  # contains a '.') would land the fixture where the pack won't look.
+  slug="$(printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g')"
   d="$HOME/.claude/projects/$slug"
   mkdir -p "$d"
   cat > "$d/$2.jsonl" <<JSONL
@@ -99,7 +102,7 @@ n="$(printf '%s' "$alljson" | python3 -c 'import json,sys; print(len(json.load(s
 [ "$n" -ge 1 ] && ok "--all found >=1 project ($n)" || bad "--all found no projects"
 
 echo "[4] parser extracts the method signal from a claude transcript"
-tr="$HOME/.claude/projects/$(printf '%s' "$HUB" | sed 's#/#-#g')/hubsession.jsonl"
+tr="$HOME/.claude/projects/$(printf '%s' "$HUB" | sed 's/[^A-Za-z0-9]/-/g')/hubsession.jsonl"
 pjson="$(python3 "$REPO/bin/fleet_chat_parse.py" "$tr" 2>/dev/null)"
 python3 - "$pjson" <<'PY'
 import json, sys

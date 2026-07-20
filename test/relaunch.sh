@@ -17,6 +17,9 @@
 #   hub    — same dead-window relaunch through bare `fleet` (the coordinator
 #            path: cmd_hub → session_window hub), proving the fix is not
 #            worker-only.
+#   in-win — `fleet` typed INSIDE the dead hub window's own fallback shell (the
+#            Ctrl+C-to-exit case) must relaunch in place, not no-op (needs the
+#            context window_cmd exports + in_target_window in cmd_hub).
 #
 # Uses the DEFAULT tmux server but only the sandbox's own session
 # (fleet-sandbox) + the fv-* views the attach attempts leave behind (no tty
@@ -132,3 +135,21 @@ wait_for launched_more hub "$n_before" \
   || fail "dead COORDINATOR window was NOT relaunched (count stuck at $n_before)"
 [ "$(pane_pid hub)" != "$pid_before" ] || fail "hub relaunch did not respawn the pane"
 echo "PASS (scenario 3): bare fleet relaunched a dead coordinator (hub) window"
+
+# ---------- Scenario 4: `fleet` typed INSIDE the dead window's fallback shell ----------
+# The Ctrl+C-to-exit case: the agent dies, the operator is left at the window's
+# bare shell and types `fleet` THERE. That fleet is a child of the pane, so the
+# dead-detection reads the window as alive and the old code just re-selected it
+# and exited — the operator was stuck (no relaunch). The fix: window_cmd exports
+# the launch context into the fallback shell (so bare `fleet` resolves the same
+# project) and in_target_window makes cmd_hub relaunch this role in place.
+wait_for pane_dead hub || fail "hub window not a bare shell before scenario 4"
+n_before="$(launches hub)"
+# A BARE `fleet` (no --project, no FLEET_* on the send-keys line): it must resolve
+# purely from the context window_cmd exported into this fallback shell.
+tmux send-keys -t "$SESS:hub" "fleet" Enter
+wait_for launched_more hub "$n_before" \
+  || fail "in-window bare fleet did NOT relaunch from the fallback shell (count stuck at $n_before)"
+tmux list-windows -t "$SESS" -F '#{window_name}' | grep -Fxq hub \
+  || fail "in-window relaunch lost the hub window"
+echo "PASS (scenario 4): bare fleet from the dead window's own shell relaunched in place"

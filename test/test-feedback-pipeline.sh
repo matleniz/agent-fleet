@@ -45,7 +45,9 @@ EOF
 
 mk_transcript() {  # <dir> <session-id>
   local slug d
-  slug="$(printf '%s' "$1" | sed 's#/#-#g')"
+  # Match Claude Code's real slug (every non-alnum -> '-'), = pack.sh
+  # _claude_proj_slug; a mktemp path has a '.', so 's#/#-#g' would misplace it.
+  slug="$(printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g')"
   d="$HOME/.claude/projects/$slug"
   mkdir -p "$d"
   cat > "$d/$2.jsonl" <<JSONL

@@ -224,7 +224,9 @@ cmd_hub() {
   # Not yet in a tmux window: pick the machine and (re)open the `hub` window
   # there, then attach. session_window never returns. A local target with no hub
   # is caught early; a remote target's hub is validated inside its container.
-  if [ -z "${FLEET_IN_WINDOW:-}" ]; then
+  # in_target_window: `fleet` typed in the hub window's own fallback shell (agent
+  # died) relaunches in place instead of a no-op select (see in_target_window).
+  if [ -z "${FLEET_IN_WINDOW:-}" ] && ! in_target_window hub; then
     target_machine
     if [ "$M_LOCAL" = 1 ] && { [ -z "$HUB" ] || [ ! -d "$HUB" ]; }; then
       echo "error: project '$PROJ_NAME' has no docs hub (HUB unset in $CONF)." >&2
@@ -256,7 +258,9 @@ cmd_worker() {
   # Not yet in a tmux window: pick the machine and (re)open the worker window
   # there, then attach. The worktree itself is created inside that window, on the
   # machine where it lives (so a remote-only project needs no local clone).
-  if [ -z "${FLEET_IN_WINDOW:-}" ]; then
+  # in_target_window: `fleet w <name>` typed in that worker's own fallback shell
+  # (agent died) relaunches in place instead of a no-op select.
+  if [ -z "${FLEET_IN_WINDOW:-}" ] && ! in_target_window "$name"; then
     target_machine
     # Admission is probe-then-create (S4): fleet_guard only checks the count;
     # session_window (below) is what actually creates the tmux window future
@@ -335,13 +339,45 @@ target_machine() {  # [default-name]
 # windows pin the resolved env (same box, correct paths); a remote window runs
 # in the container, which resolves its own config, so only --project is passed.
 # FLEET_IN_WINDOW=1 tells the inner fleet to do the real launch, not re-wrap.
+#
+# The context vars are EXPORTED into the shell (not `env`-scoped to the inner
+# fleet), so the fallback shell left behind when the agent exits ("<cmd>; exec
+# bash") carries them too: an operator who then types `fleet` in that dead
+# window resolves the SAME project/machine and relaunches this role in place
+# (via in_target_window in cmd_hub/cmd_worker). Three deliberate choices:
+# (1) `unset FLEET_CONF` first: a fleet tmux SERVER holds FLEET_CONF in its
+#     global environment, so every window it spawns inherits the SERVER's
+#     project (e.g. fleet-sof's sof.env). fleet_resolve_conf prefers FLEET_CONF
+#     over --project, so without the unset the inner fleet (and the fallback
+#     shell) would resolve the wrong project. Clearing it lets --project win.
+# (2) export FLEET_PROJECT, not FLEET_CONF: the fallback shell resolves this
+#     window's project by default, yet a later `fleet --project X` typed there
+#     still wins (FLEET_PROJECT is only the default, FLEET_CONF would override).
+# (3) FLEET_IN_WINDOW stays command-scoped, NOT exported — the in-place relaunch
+#     decision is made by matching the current window (in_target_window), so
+#     `fleet <other-role>` from a fallback shell still opens the other window.
 window_cmd() {  # <fleet args...>
   if [ "$M_LOCAL" = 1 ]; then
-    printf 'env FLEET_IN_WINDOW=1 FLEET_CONF=%q FLEET_HOME=%q FLEET_PACKS_DIR=%q FLEET_MACHINE=%q fleet --project %q%s %s' \
-      "$CONF" "$FLEET_ROOT" "$FLEET_PACKS_DIR" "$M_NAME" "$M_PROJECT" "${agent:+ -a $agent}" "$*"
+    printf 'unset FLEET_CONF; export FLEET_HOME=%q FLEET_PACKS_DIR=%q FLEET_PROJECT=%q FLEET_MACHINE=%q; FLEET_IN_WINDOW=1 fleet --project %q%s %s' \
+      "$FLEET_ROOT" "$FLEET_PACKS_DIR" "$M_PROJECT" "$M_NAME" "$M_PROJECT" "${agent:+ -a $agent}" "$*"
   else
-    printf 'FLEET_IN_WINDOW=1 fleet --project %s%s %s' "$M_PROJECT" "${agent:+ -a $agent}" "$*"
+    printf 'unset FLEET_CONF; export FLEET_PROJECT=%q; FLEET_IN_WINDOW=1 fleet --project %s%s %s' \
+      "$M_PROJECT" "$M_PROJECT" "${agent:+ -a $agent}" "$*"
   fi
+}
+
+# True when we are already sitting in tmux window <win> (e.g. the fallback shell
+# of a window whose agent exited). Lets cmd_hub/cmd_worker relaunch THIS role in
+# place instead of no-op'ing: from the fallback shell the fleet we spawn is a
+# child of the pane, so session_window's dead-detection reads the window as
+# alive and skips the respawn, and view_snippet then just re-selects the window
+# and exits — the operator is stuck at the shell. Matching a DIFFERENT role
+# still routes through session_window (opens/selects that role's own window).
+# Window-name match only: a rare false match just relaunches the same-named role
+# in place, which is what the operator wanted anyway.
+in_target_window() {  # <win>
+  [ -n "${TMUX:-}" ] || return 1
+  [ "$(tmux display-message -p '#{window_name}' 2>/dev/null)" = "$1" ]
 }
 
 # Emit a shell script that hands THIS terminal a private, grouped "view" of the

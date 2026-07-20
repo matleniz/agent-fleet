@@ -119,6 +119,26 @@ dead = the pane process is a childless shell — an agent, an in-window fleet at
 its resume prompt, or a command running in the fallback shell all show as
 children and are left alone. E2E: `test/relaunch.sh`.
 
+Follow-up fixes (2026-07-20):
+- **In-window relaunch from the dead window's own shell.** `respawn` only fires
+  when `fleet` is run from OUTSIDE tmux. The natural move (Ctrl+C the agent, then
+  type `fleet` at the fallback shell that's left) hit a no-op: that fleet is a
+  child of the pane, so dead-detection read the window as alive, `view_snippet`
+  just re-selected it and exited. Fix: `window_cmd` now EXPORTS the launch
+  context into the fallback shell (so a bare `fleet` there resolves the same
+  project — via `FLEET_PROJECT`, and `unset FLEET_CONF` first to defeat the tmux
+  server's inherited project), and `in_target_window` makes cmd_hub/cmd_worker
+  relaunch this role in place. E2E: `test/relaunch.sh` scenario 4.
+- **Resume loads the real last session.** `pack_launch --resume` ran `claude
+  --continue`, which for dispatch-spawned (headless) cwds falls back to an mtime
+  scan — a launch aborted at startup leaves a fresh-mtime, reply-less `.jsonl`
+  that shadows the real conversation. Now resolves the last session that has an
+  assistant reply and passes `--resume <id>` (fallback `--continue`). Fixed a
+  companion bug the audit surfaced: the claude pack munged session-dir paths with
+  `s#/#-#g`, but Claude Code maps EVERY non-alphanumeric char to `-` (verified
+  against the installed CLI), so any cwd with a `.`/`_` missed its sessions
+  silently — now `_claude_proj_slug`. Test: `test/test-claude-resume.sh`.
+
 ### Fleet-wide conversation-feedback routine  [tooling shipped; scheduling is instance-side]
 A scheduled routine (see `docs/04-routines.md`) that analyzes the recorded
 conversations across **all** workers and sessions and turns them into method

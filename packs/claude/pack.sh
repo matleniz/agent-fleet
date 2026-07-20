@@ -15,6 +15,13 @@ pack_claude_subagent_model() {
   export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-sonnet}"
 }
 
+# Claude Code's session dir for a cwd: ~/.claude/projects/<slug>, where the slug
+# is the ABSOLUTE path with EVERY non-alphanumeric char replaced 1-for-1 by '-'
+# (verified against the installed CLI: '.', '_', space, '@' all map to '-', no
+# collapsing of runs). NOT just '/': a cwd containing '.' or '_' (a worktree like
+# feature.v2 or foo_bar) would otherwise miss its sessions silently.
+_claude_proj_slug() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+
 # Launch Claude Code in the CURRENT directory (caller cd's first).
 # Workers run in AUTO mode: autonomous, but a server-side classifier gates each
 # action (local edits / installs from a manifest / push to the worker's own branch
@@ -28,7 +35,17 @@ pack_claude_subagent_model() {
 # chosen by hand via /model, subagents via pack_claude_subagent_model above.
 pack_launch() {
   local resume=()
-  [ "${1:-}" = "--resume" ] && resume=(--continue)
+  if [ "${1:-}" = "--resume" ]; then
+    # Resume the actual last WORKING session by id, not `claude --continue`.
+    # --continue picks "most recent in cwd", but for a cwd whose sessions came
+    # from `fleet dispatch` (headless -p, which never records lastSessionId in
+    # ~/.claude.json) it falls back to a raw mtime scan — and a launch aborted at
+    # startup (bad --model, MCP error) leaves a fresh-mtime, reply-less .jsonl
+    # that then shadows the real last conversation. _claude_last_session_id skips
+    # those. Fall back to --continue only if we cannot find a real session id.
+    local sid; sid="$(_claude_last_session_id "$PWD")"
+    if [ -n "$sid" ]; then resume=(--resume "$sid"); else resume=(--continue); fi
+  fi
   pack_claude_subagent_model
   fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
   _claude_mcp_flags
@@ -64,18 +81,33 @@ pack_global_setup() {
   echo "wired"
 }
 
-# Claude Code stores sessions per project dir under ~/.claude/projects/,
-# with the absolute path munged (slashes -> dashes), one .jsonl per session.
+# Claude Code stores sessions per project dir under ~/.claude/projects/, one
+# .jsonl per session (slug = _claude_proj_slug of the absolute cwd).
 pack_has_sessions() {
-  local d; d="$HOME/.claude/projects/$(printf '%s' "$1" | sed 's#/#-#g')"
+  local d; d="$HOME/.claude/projects/$(_claude_proj_slug "$1")"
   [ -d "$d" ] && ls "$d"/*.jsonl >/dev/null 2>&1
+}
+
+# The newest session id (basename minus .jsonl) for <cwd> that has at least one
+# assistant reply — i.e. a real conversation, not a launch aborted before its
+# first turn (which still writes a fresh-mtime .jsonl). Empty if none. Iterates
+# newest-mtime first and returns the first real one; once the aborted-empty
+# files are excluded, mtime order tracks last-worked correctly.
+_claude_last_session_id() {  # <abs-cwd>
+  local d f; d="$HOME/.claude/projects/$(_claude_proj_slug "$1")"
+  [ -d "$d" ] || return 0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    grep -q '"type":"assistant"' "$f" 2>/dev/null || continue
+    basename "$f" .jsonl; return 0
+  done < <(ls -t "$d"/*.jsonl 2>/dev/null)
 }
 
 # Optional: a READABLE pointer to this pack's recorded conversation for an agent
 # that ran in <dir> — for `fleet chats` (cross-agent reprise; transcripts are not
 # CLI-portable, so a new agent READS it, it does not resume it). Empty if none.
 pack_chat_pointer() {
-  local d; d="$HOME/.claude/projects/$(printf '%s' "$1" | sed 's#/#-#g')"
+  local d; d="$HOME/.claude/projects/$(_claude_proj_slug "$1")"
   [ -d "$d" ] && ls "$d"/*.jsonl >/dev/null 2>&1 || return 0
   ls -t "$d"/*.jsonl 2>/dev/null | head -1
 }
@@ -104,11 +136,11 @@ pack_chat_history() {  # <hub_dir> <wt_home_dir> <since_epoch>
   local hub="$1" wt_home="$2" since="${3:-}" root="$HOME/.claude/projects"
   local slug wt_slug d name
   if [ -n "$hub" ]; then
-    slug="$(printf '%s' "$hub" | sed 's#/#-#g')"
+    slug="$(_claude_proj_slug "$hub")"
     _claude_emit_transcripts coordinator - "$hub" "$root/$slug" "$since"
   fi
   if [ -n "$wt_home" ]; then
-    wt_slug="$(printf '%s' "$wt_home" | sed 's#/#-#g')"
+    wt_slug="$(_claude_proj_slug "$wt_home")"
     for d in "$root/$wt_slug"-*/; do
       [ -d "$d" ] || continue
       name="$(basename "$d")"; name="${name#"$wt_slug"-}"
