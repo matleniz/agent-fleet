@@ -205,8 +205,20 @@ fleet_node_heap_guard() {
 fleet_valid_name() {  # <name> [<what>]
   case "${1-}" in
     '') echo "error: empty ${2:-name}" >&2; return 2 ;;
+    .|..)
+      echo "error: ${2:-name} '$1' — '.' and '..' are reserved path components, not allowed" >&2; return 2 ;;
     *[!a-zA-Z0-9._-]*)
       echo "error: ${2:-name} '$1' — use only letters, digits, '.', '_', '-'" >&2; return 2 ;;
+    *)
+      # A name made of nothing but '.' (e.g. "...", "....") passes the charset
+      # check above and isn't literally '.'/'..', but is still a confusing,
+      # traversal-adjacent path component — reject it too. A name containing
+      # any non-dot character (e.g. "feature.v2") is unaffected.
+      case "$1" in
+        *[!.]*) ;;
+        *) echo "error: ${2:-name} '$1' — must not consist only of '.' characters" >&2; return 2 ;;
+      esac
+      ;;
   esac
   return 0
 }

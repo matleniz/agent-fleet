@@ -52,7 +52,15 @@ fi
 
 mkdir -p "$WT_HOME"
 git -C "$CODE_REPO" fetch origin --quiet 2>/dev/null || true   # best-effort (a repo may have no origin)
-git -C "$CODE_REPO" worktree add -b "$name" "$dest" "$base"
+# The dest/branch checks above (L48-51) and this add are not atomic: a
+# concurrent new-worker with the same name can slip past both checks before
+# either reaches here. git itself refuses the loser (dest or branch already
+# taken) — just fail cleanly here instead of letting `set -e` kill the script
+# on git's raw error output.
+if ! git -C "$CODE_REPO" worktree add -b "$name" "$dest" "$base"; then
+  echo "error: could not create worktree '$name' (concurrent creation or dirty state?)" >&2
+  exit 1
+fi
 
 # Per-pack worktree setup (the anti-overwrite barrier, if the project has a
 # hub). Each pack runs in a subshell so their function definitions never collide.
