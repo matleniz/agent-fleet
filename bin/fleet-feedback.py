@@ -30,7 +30,11 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from fleet_common import assert_not_legacy  # noqa: E402
+
 ROOT = os.environ.get("FLEET_HOME") or os.path.expanduser("~/.config/fleet")
+assert_not_legacy(ROOT)
 DEFAULT_FILE = os.path.join(ROOT, "feedback-seen.json")
 
 _WS = re.compile(r"\s+")

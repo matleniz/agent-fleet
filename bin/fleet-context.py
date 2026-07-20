@@ -25,9 +25,10 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from fleet_common import parse_env  # noqa: E402
+from fleet_common import assert_not_legacy, parse_env  # noqa: E402
 
 ROOT = os.environ.get("FLEET_HOME") or os.path.expanduser("~/.config/fleet")
+assert_not_legacy(ROOT)
 PROJECTS_DIR = os.path.join(ROOT, "projects")
 DEFAULT_ENV = os.path.join(ROOT, "default.env")
 
