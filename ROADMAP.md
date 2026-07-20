@@ -3,6 +3,91 @@
 Near-term priorities for agent-fleet, most urgent first. Longer-tail vetted ideas
 live in `BACKLOG.md`.
 
+## Security hardening (adversarial audit 2026-07-20)  [unfixed]
+
+An adversarial code review found that each of the three core safety invariants
+(hub read-only, container isolation, legacy-config isolation) holds on the ONE
+entry path that was designed and tested, and fails open on an adjacent path that
+reaches the same resource. Findings 1-3 break a promise the product sells;
+verified empirically (findings 1 and 3 by running the tool, finding 2 by
+reproducing the exact SSH command string). Most severe first.
+
+### S1 — symlink bypass of the hub read-only barrier (claude + gemini)  [CRITICAL]
+`bin/hub-readonly-guard.py:20,31` resolves candidate paths with `os.path.abspath`,
+never `realpath`. A symlink created inside the worktree that points at a hub file
+has a literal path that is under the hub in neither absolute nor relative form:
+the guard authorizes it, but the write follows the link and mutates the hub.
+Shared by the claude (`packs/claude/pack.sh`) and gemini (`packs/gemini/pack.sh`)
+hooks — the two most-used packs. opencode (`packs/opencode/pack.sh`, relative-path
+match on the literal arg) and cursor (`packs/cursor/pack.sh`, `Write({hub}/**)`
+glob on the literal arg) have the same hole by construction. Only antigravity /
+copilot (OS mount namespace, `packs/hub-mount-ns.sh`) are immune — the read-only
+applies to the mounted inode regardless of the path used to reach it.
+- Repro: `ln -sf $HUB/AGENTS.md $WT/link.md`; edit via `$WT/link.md` → guard says
+  allowed, hub file is written.
+- Fix: `os.path.realpath()` (not `abspath`) on every candidate before comparing to
+  `HUB`. For opencode/cursor, either add a rule denying symlink creation pointing
+  outside the worktree, or document explicitly (README, docs/02) that these packs
+  share the same "not write-proof" caveat as claude/gemini — today docs/02 admits
+  only the shell-redirect hole, not this one.
+
+### S2 — command injection via unvalidated name → exec on the remote HOST, outside the container  [CRITICAL]
+`fleet_valid_name` (`bin/fleet-config.sh:200`) restricts names to `[a-zA-Z0-9._-]`
+precisely because they thread UNQUOTED through composed tmux/ssh/docker strings —
+but it is called at only 3 sites (`bin/fleet:254`, `bin/fleet:853`,
+`bin/new-worker:45`). It is missing in `cmd_remote` (`bin/fleet:466`, `$name`),
+`cmd_peek` (`bin/fleet:1163`, `$win`) and `cmd_send` (`bin/fleet:1180`, `$win` —
+the text is already base64-safe, the window name is not). A name like
+`x; touch /tmp/PWNED #` escapes the `docker exec … ssh` string and runs directly
+on the VM host shell, OUTSIDE the container that is supposed to confine
+bypass-mode workers — the exact isolation the Docker deploy exists to provide.
+- Fix: call `fleet_valid_name` at the top of `cmd_remote` (for `del`/`w`/`worker`)
+  and on `$win` in `cmd_peek`/`cmd_send`. Better: route every name/window through
+  one validation choke point before it reaches any SSH string — 3 calls for 6+
+  entry points that need it shows "each cmd_* remembers" does not hold.
+
+### S3 — legacy-config isolation enforced only in bash, bypassed by the Python tools  [HIGH]
+`AGENTS.md` forbids any fallback that resolves the legacy `claude-fleet` config.
+`bin/fleet-config.sh:25-32` enforces it (refuses to run if `FLEET_HOME` is a
+`claude-fleet` path). But the 4 standalone Python tools resolve `FLEET_HOME`
+themselves without that guard: `fleet-status.py:28`, and the same pattern in
+`fleet-context.py`, `fleet-chats-scan.py`, `fleet-feedback.py`. Verified:
+`FLEET_HOME=…/claude-fleet python3 bin/fleet-status.py --all` lists a real legacy
+project, rc=0 — leaks real third-party project paths/hub/worktrees.
+- Fix: factor the guard into a shared helper in `bin/fleet_common.py` (already
+  imported by these scripts) and call it before any `FLEET_ROOT` resolution.
+
+### S4 — admission guard has a TOCTOU race (no lock)  [MEDIUM]
+`fleet_guard` (`bin/fleet-config.sh:421`) probes live tmux windows, compares to
+`MAX_WORKERS`, returns — the window/worktree is created only afterwards by the
+caller, with no lock between check and create. N near-simultaneous `fleet dispatch`
+calls (a pattern AGENTS.md itself recommends) can all read the same "5/6" and all
+pass → `MAX_WORKERS` exceeded, the exact host-freeze scenario the guard exists to
+prevent ([[fleet-crash-resource-mgmt]]). Fix: `flock` around probe→admit→create,
+scoped per machine. (Note: the stale line refs `:288-311` / `:252-266` in the
+Diagnosis section below should be corrected to `:421` / `:385` in the same pass.)
+
+### S5 — guard fails open on unreadable JSON  [MEDIUM]
+`bin/hub-readonly-guard.py:24-25` `except Exception: sys.exit(0)`. Deliberate
+("never break unrelated tool calls"), but combined with S1 it means the second
+line of defense also does not hold: a malformed / truncated hook invocation drops
+the barrier instead of holding it — contradicts the "fail closed" stance docs/02
+claims for the mount-namespace packs. Lower residual risk than S1 (stdin is not
+normally worker-controlled). Reconsider once S1 is fixed.
+
+### S6 — `fleet_valid_name` accepts `.` / `..` and dot-only names  [LOW]
+`bin/fleet-config.sh:200`: the charset `[a-zA-Z0-9._-]` accepts `.` and `..`. In
+`bin/new-worker:47-48` `dest="$WT_HOME/$name"` with `name=".."` points at the
+parent of `WT_HOME`; currently neutralized only because `[ -e "$dest" ]` finds it
+existing — an accidental guard, with a race window if `WT_HOME` does not yet exist
+(`mkdir -p` follows at :53). Fix: reject `.`, `..`, and dot-only names explicitly.
+
+### S7 — TOCTOU on worktree creation  [LOW]
+`bin/new-worker:47-55`: between the `[ -e "$dest" ]` / `git show-ref` checks and
+`git worktree add`, two concurrent same-name calls can both pass the checks.
+Benign (the second `worktree add` likely fails) but an untested failure mode — add
+a case to `test/`.
+
 ## Next (most urgent)
 
 ### Relaunch the agent in a window whose process died  [bug] — DONE
