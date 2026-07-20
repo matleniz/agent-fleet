@@ -83,3 +83,47 @@ grep -q "rule ALPHA" "$HUBDIR/.cursor/rules/00-fleet-user.mdc" || fail "hub rule
 grep -qxF ".cursor/rules/00-fleet-user.mdc" "$HUBDIR/.git/info/exclude" || fail "hub rule not git-excluded"
 rm -rf "$HUBDIR"
 echo "PASS: pack_global_inject covers an arbitrary dir (hub coordinator)"
+
+# --- fleet global skills: engine templates -> per-user install + claude symlink ---
+H3="$(mktemp -d)"; trap 'rm -rf "$stub" "$H" "$H2" "$WT" "$H3"' EXIT
+
+# status on a fresh HOME: everything not-installed
+out="$(run "$H3" global skills 2>/dev/null)"
+grep -q "dispatch-work.*not-installed" <<<"$out" || fail "skills status: dispatch-work should be not-installed (got: $out)"
+
+# sync one skill: canonical install + claude per-skill symlink
+run "$H3" global skills sync dispatch-work >/dev/null 2>&1 || fail "skills sync dispatch-work errored"
+[ -f "$H3/.agents/skills/dispatch-work/SKILL.md" ] || fail "sync did not install the canonical copy"
+[ -L "$H3/.claude/skills/dispatch-work" ] || fail "sync did not create the claude symlink"
+[ "$(readlink -f "$H3/.claude/skills/dispatch-work")" = "$(readlink -f "$H3/.agents/skills/dispatch-work")" ] \
+  || fail "claude symlink points to the wrong place"
+out="$(run "$H3" global skills 2>/dev/null)"
+grep -q "dispatch-work.*in-sync.*claude:linked" <<<"$out" \
+  || fail "skills status: freshly synced skill should be in-sync + linked"
+
+# local customization shows as drift; a named sync replaces it and keeps a .bak
+echo "LOCAL TWEAK" >> "$H3/.agents/skills/dispatch-work/SKILL.md"
+out="$(run "$H3" global skills 2>/dev/null)"
+grep -q "dispatch-work.*drifted" <<<"$out" || fail "skills status: local edit should show drifted"
+run "$H3" global skills sync dispatch-work >/dev/null 2>&1 || fail "re-sync errored"
+grep -q "LOCAL TWEAK" "$H3/.agents/skills/dispatch-work.bak/SKILL.md" || fail "re-sync lost the previous copy (.bak missing the local edit)"
+diff -rq "$ENGINE/templates/skills/dispatch-work" "$H3/.agents/skills/dispatch-work" >/dev/null || fail "re-sync did not restore the template content"
+
+# a pre-existing REAL dir at ~/.claude/skills (hand copy) is converted to a symlink, backup kept
+rm -f "$H3/.claude/skills/dispatch-work"
+mkdir -p "$H3/.claude/skills/dispatch-work"; echo "OLD HAND COPY" > "$H3/.claude/skills/dispatch-work/SKILL.md"
+run "$H3" global skills sync dispatch-work >/dev/null 2>&1 || fail "sync over hand copy errored"
+[ -L "$H3/.claude/skills/dispatch-work" ] || fail "hand copy not converted to a symlink"
+grep -q "OLD HAND COPY" "$H3/.claude/skills/dispatch-work.bak/SKILL.md" || fail "hand copy not backed up"
+
+# guardrails: no bulk no-name sync; unknown skill errors
+run "$H3" global skills sync >/dev/null 2>&1 && fail "sync with no name should error (no silent bulk sync)"
+run "$H3" global skills sync no-such-skill >/dev/null 2>&1 && fail "sync of an unknown skill should error"
+
+# --all installs every template skill
+run "$H3" global skills sync --all >/dev/null 2>&1 || fail "sync --all errored"
+for d in "$ENGINE"/templates/skills/*/; do
+  s="$(basename "$d")"
+  [ -f "$H3/.agents/skills/$s/SKILL.md" ] || fail "--all missed skill $s"
+done
+echo "PASS: fleet global skills (status drift, targeted sync + .bak, claude symlink convergence, --all)"

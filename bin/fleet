@@ -1013,14 +1013,91 @@ global_report() {
   done
 }
 
-cmd_global() {  # fleet global [install|status|edit]
+# ---------- global skills (per-user skills synced from the engine templates) ----
+# Same model as the instructions file: the engine's templates/skills/ is the
+# SOURCE; $FLEET_GLOBAL_SKILLS (default ~/.agents/skills, the agentskills.io
+# personal dir) is the per-user install every project's sessions see; and
+# ~/.claude/skills/<name> is a per-skill symlink (Claude Code only reads its own
+# dir). This replaces hand-copying template skills to the user level and the
+# drift that follows. There is deliberately NO bulk no-name sync: an installed
+# copy may carry local customization, so `status` shows the drift and the human
+# names what to replace (the previous copy is kept at <name>.bak).
+global_skills_dir() { echo "${FLEET_GLOBAL_SKILLS:-$HOME/.agents/skills}"; }
+
+global_skill_state() {  # <name> -> in-sync | drifted | not-installed
+  local tpl="$SELF_DIR/../templates/skills/$1" dst; dst="$(global_skills_dir)/$1"
+  [ -d "$dst" ] || { echo not-installed; return; }
+  if diff -rq "$tpl" "$dst" >/dev/null 2>&1; then echo in-sync; else echo drifted; fi
+}
+
+global_skill_wiring() {  # <name> -> linked | copy | missing   (the ~/.claude/skills side)
+  local c="$HOME/.claude/skills/$1" dst; dst="$(global_skills_dir)/$1"
+  if [ -L "$c" ] && [ "$(readlink -f "$c" 2>/dev/null)" = "$(readlink -f "$dst" 2>/dev/null)" ]; then
+    echo linked
+  elif [ -e "$c" ]; then echo copy; else echo missing; fi
+}
+
+global_skills_status() {
+  local d name
+  echo "engine templates/skills -> $(global_skills_dir)   (claude reads per-skill symlinks in ~/.claude/skills)"
+  for d in "$SELF_DIR/../templates/skills"/*/; do
+    name="$(basename "$d")"
+    [ -f "$d/SKILL.md" ] || continue
+    printf '  %-24s %-14s claude:%s\n' "$name" "$(global_skill_state "$name")" "$(global_skill_wiring "$name")"
+  done
+  echo "sync (replaces; previous copy kept at <name>.bak):  fleet global skills sync <name>... | --all"
+}
+
+global_skill_sync() {  # <name> — install/refresh one skill + (re)wire the claude symlink
+  local name="$1" tpl dst claude note=""
+  tpl="$SELF_DIR/../templates/skills/$name"
+  dst="$(global_skills_dir)/$name"; claude="$HOME/.claude/skills/$name"
+  [ -f "$tpl/SKILL.md" ] || { echo "error: no template skill '$name' (list: fleet global skills)" >&2; return 2; }
+  mkdir -p "$(dirname "$dst")" "$HOME/.claude/skills"
+  if [ -d "$dst" ] && ! diff -rq "$tpl" "$dst" >/dev/null 2>&1; then
+    rm -rf "$dst.bak"; mv "$dst" "$dst.bak"; note=" (previous kept at $dst.bak)"
+  fi
+  [ -d "$dst" ] || cp -R "$tpl" "$dst"
+  # Claude wiring: a real dir/file there (a hand copy) is backed up, a stale
+  # symlink is replaced; the result is always <claude>/<name> -> canonical.
+  if [ -e "$claude" ] && [ ! -L "$claude" ]; then
+    rm -rf "$claude.bak"; mv "$claude" "$claude.bak"; note="$note (claude copy kept at $claude.bak)"
+  fi
+  [ -L "$claude" ] && rm -f "$claude"
+  ln -s "$dst" "$claude"
+  echo "  $name: synced$note"
+}
+
+cmd_global_skills() {  # fleet global skills [sync <name>...|--all]
+  case "${1:-status}" in
+    status) global_skills_status ;;
+    sync)
+      shift
+      [ $# -ge 1 ] || { echo "usage: fleet global skills sync <name>... | --all" >&2; exit 2; }
+      local names=() d rc=0
+      if [ "$1" = "--all" ]; then
+        for d in "$SELF_DIR/../templates/skills"/*/; do
+          [ -f "$d/SKILL.md" ] && names+=("$(basename "$d")")
+        done
+      else
+        names=("$@")
+      fi
+      local n; for n in "${names[@]}"; do global_skill_sync "$n" || rc=2; done
+      return "$rc" ;;
+    *) echo "usage: fleet global skills [sync <name>... | --all]" >&2; exit 2 ;;
+  esac
+}
+
+cmd_global() {  # fleet global [install|status|edit|skills ...]
   local canon; canon="$(global_canon)"
   case "${1:-install}" in
     status)      global_report status "$canon" ;;
     edit)        [ -e "$canon" ] || global_ensure_canon "$canon"; exec "${EDITOR:-vi}" "$canon" ;;
+    skills)      shift; cmd_global_skills "$@" ;;
     install|"")  global_ensure_canon "$canon"; global_report install "$canon"
-                 echo "edit it:  fleet global edit   ·   re-wire after enabling a pack:  fleet global" ;;
-    *)           echo "usage: fleet global [install|status|edit]" >&2; exit 2 ;;
+                 echo "edit it:  fleet global edit   ·   re-wire after enabling a pack:  fleet global"
+                 echo "per-user skills from the engine templates:  fleet global skills" ;;
+    *)           echo "usage: fleet global [install|status|edit|skills [sync <name>...|--all]]" >&2; exit 2 ;;
   esac
 }
 
@@ -1141,7 +1218,7 @@ case "$sub" in
   _dispatch-run) cmd_dispatch_run "$@" ;;
   attach)        cmd_attach ;;
   wait)          cmd_wait "${1:-}" ;;
-  global)        cmd_global "${1:-}" ;;
+  global)        cmd_global "$@" ;;
   r)           cmd_remote "$@" ;;
   ls)          cmd_ls ;;
   del)         cmd_del "${1:-}" ;;

@@ -8,6 +8,15 @@ Project detail belongs in the repo's `AGENTS.md`, not here.
 CLI to it — write it once, all agents read it. Re-run `fleet global` after
 enabling a new pack; `fleet global status` shows what is wired.
 
+Skills work the same way: `fleet global skills` compares the engine's
+`templates/skills/` with your per-user install (`~/.agents/skills/`, override
+`FLEET_GLOBAL_SKILLS`; Claude Code reads them through per-skill symlinks in
+`~/.claude/skills/`), and `fleet global skills sync <name>` (or `--all`)
+installs/refreshes one — no more hand-copying that drifts. Sync is deliberately
+name-by-name: an installed copy may carry your local customization, so `status`
+shows the drift and you choose what to replace (previous copy kept at
+`<name>.bak`).
+
 How each CLI is pointed at the one canonical file:
 
 | CLI | Wiring `fleet global` applies |

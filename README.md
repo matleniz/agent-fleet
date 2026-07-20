@@ -170,6 +170,8 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet add-agent PACK   # enable another pack (then refreshes every worktree)
    fleet refresh          # re-run the enabled packs' worker setup (all, or one name)
    fleet global           # install ONE per-user instructions file into every CLI
+   fleet global skills    # per-user skills vs the engine templates (in-sync/drifted);
+                          #   targeted update: fleet global skills sync <name> | --all
    ```
    Every session runs inside tmux (local mirrors the VM), so it survives a
    disconnect and stays observable/controllable — `fleet peek`/`send` from a
