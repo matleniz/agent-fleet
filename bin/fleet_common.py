@@ -11,6 +11,7 @@ picked up automatically, matching bin/fleet's dynamic barrier_ignore_regex.
 import os
 import re
 import subprocess
+import sys
 
 # --- .env parsing -----------------------------------------------------------
 _ASSIGN = re.compile(r'^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$')
@@ -51,6 +52,23 @@ def parse_env(path):
             raw = raw[1:-1]
         scope[key] = _expand(raw, scope)
     return scope
+
+
+# --- legacy isolation guard (transition period) ------------------------------
+def assert_not_legacy(root):
+    """Refuse to resolve the legacy claude-fleet config (mirror of the bash
+    guard in fleet-config.sh: FLEET_ROOT matching */claude-fleet or
+    */claude-fleet/*). The new tools must never read the old fleet's real
+    projects (see AGENTS.md) — every Python entry point must call this on its
+    resolved FLEET_HOME before the value is used for anything."""
+    resolved = os.path.realpath(os.path.expanduser(root))
+    if "claude-fleet" in resolved.split(os.sep):
+        sys.stderr.write(
+            f"error: FLEET_HOME resolves to the legacy claude-fleet config ({root}).\n"
+            "  agent-fleet must not read the legacy fleet. Unset FLEET_HOME or point\n"
+            "  it at ~/.config/fleet; migrate real projects with fleet-migrate.\n"
+        )
+        raise SystemExit(2)
 
 
 # --- barrier files (derived from the packs, not hardcoded) ------------------
