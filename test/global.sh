@@ -106,7 +106,7 @@ echo "LOCAL TWEAK" >> "$H3/.agents/skills/dispatch-work/SKILL.md"
 out="$(run "$H3" global skills 2>/dev/null)"
 grep -q "dispatch-work.*drifted" <<<"$out" || fail "skills status: local edit should show drifted"
 run "$H3" global skills sync dispatch-work >/dev/null 2>&1 || fail "re-sync errored"
-grep -q "LOCAL TWEAK" "$H3/.agents/skills/dispatch-work.bak/SKILL.md" || fail "re-sync lost the previous copy (.bak missing the local edit)"
+grep -q "LOCAL TWEAK" "$H3/.agents/skills.bak/dispatch-work/SKILL.md" || fail "re-sync lost the previous copy (backup missing the local edit)"
 diff -rq "$ENGINE/templates/skills/dispatch-work" "$H3/.agents/skills/dispatch-work" >/dev/null || fail "re-sync did not restore the template content"
 
 # a pre-existing REAL dir at ~/.claude/skills (hand copy) is converted to a symlink, backup kept
@@ -114,7 +114,8 @@ rm -f "$H3/.claude/skills/dispatch-work"
 mkdir -p "$H3/.claude/skills/dispatch-work"; echo "OLD HAND COPY" > "$H3/.claude/skills/dispatch-work/SKILL.md"
 run "$H3" global skills sync dispatch-work >/dev/null 2>&1 || fail "sync over hand copy errored"
 [ -L "$H3/.claude/skills/dispatch-work" ] || fail "hand copy not converted to a symlink"
-grep -q "OLD HAND COPY" "$H3/.claude/skills/dispatch-work.bak/SKILL.md" || fail "hand copy not backed up"
+grep -q "OLD HAND COPY" "$H3/.claude/skills.bak/dispatch-work/SKILL.md" || fail "hand copy not backed up"
+[ ! -e "$H3/.claude/skills/dispatch-work.bak" ] || fail "backup left INSIDE the scanned skills dir (would register as a duplicate skill)"
 
 # guardrails: no bulk no-name sync; unknown skill errors
 run "$H3" global skills sync >/dev/null 2>&1 && fail "sync with no name should error (no silent bulk sync)"

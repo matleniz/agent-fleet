@@ -1049,19 +1049,23 @@ global_skills_status() {
 }
 
 global_skill_sync() {  # <name> — install/refresh one skill + (re)wire the claude symlink
-  local name="$1" tpl dst claude note=""
+  local name="$1" tpl dst claude bak cbak note=""
   tpl="$SELF_DIR/../templates/skills/$name"
   dst="$(global_skills_dir)/$name"; claude="$HOME/.claude/skills/$name"
+  # Backups go in SIBLING skills.bak/ dirs, never inside a skills dir the CLIs
+  # scan: a <name>.bak/ left in place still holds a SKILL.md and would register
+  # as a duplicate skill.
+  bak="$(global_skills_dir).bak/$name"; cbak="$HOME/.claude/skills.bak/$name"
   [ -f "$tpl/SKILL.md" ] || { echo "error: no template skill '$name' (list: fleet global skills)" >&2; return 2; }
   mkdir -p "$(dirname "$dst")" "$HOME/.claude/skills"
   if [ -d "$dst" ] && ! diff -rq "$tpl" "$dst" >/dev/null 2>&1; then
-    rm -rf "$dst.bak"; mv "$dst" "$dst.bak"; note=" (previous kept at $dst.bak)"
+    mkdir -p "$(dirname "$bak")"; rm -rf "$bak"; mv "$dst" "$bak"; note=" (previous kept at $bak)"
   fi
   [ -d "$dst" ] || cp -R "$tpl" "$dst"
   # Claude wiring: a real dir/file there (a hand copy) is backed up, a stale
   # symlink is replaced; the result is always <claude>/<name> -> canonical.
   if [ -e "$claude" ] && [ ! -L "$claude" ]; then
-    rm -rf "$claude.bak"; mv "$claude" "$claude.bak"; note="$note (claude copy kept at $claude.bak)"
+    mkdir -p "$(dirname "$cbak")"; rm -rf "$cbak"; mv "$claude" "$cbak"; note="$note (claude copy kept at $cbak)"
   fi
   [ -L "$claude" ] && rm -f "$claude"
   ln -s "$dst" "$claude"
