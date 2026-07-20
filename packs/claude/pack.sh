@@ -88,17 +88,27 @@ pack_has_sessions() {
   [ -d "$d" ] && ls "$d"/*.jsonl >/dev/null 2>&1
 }
 
-# The newest session id (basename minus .jsonl) for <cwd> that has at least one
-# assistant reply — i.e. a real conversation, not a launch aborted before its
-# first turn (which still writes a fresh-mtime .jsonl). Empty if none. Iterates
-# newest-mtime first and returns the first real one; once the aborted-empty
-# files are excluded, mtime order tracks last-worked correctly.
+# The newest session id (basename minus .jsonl) for <cwd> to resume as the
+# INTERACTIVE coordinator/worker, empty if none. A cwd's session dir mixes three
+# kinds and we must skip two of them:
+#   - reply-less sessions (no "type":"assistant"): a launch aborted before its
+#     first turn still writes a fresh-mtime .jsonl that would otherwise shadow
+#     the real conversation.
+#   - background-agent sessions ("sessionKind":"bg", from `fleet dispatch` /
+#     `claude agents`): they run in the same cwd but are NOT the human's
+#     session, and one that is still running can't be --resume'd at all (claude
+#     refuses: "currently running as a background agent"). This is the "it
+#     confuses sessions and subagents" bug.
+# Iterates newest-mtime first and returns the first surviving one. (Residual: a
+# still-running INTERACTIVE session could be picked and refused by claude — rare,
+# it means the same hub is open twice; claude prints a clear message then.)
 _claude_last_session_id() {  # <abs-cwd>
   local d f; d="$HOME/.claude/projects/$(_claude_proj_slug "$1")"
   [ -d "$d" ] || return 0
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    grep -q '"type":"assistant"' "$f" 2>/dev/null || continue
+    grep -q '"type":"assistant"' "$f" 2>/dev/null || continue   # reply-less/aborted
+    grep -q '"sessionKind":"bg"' "$f" 2>/dev/null && continue    # background agent, not the human's
     basename "$f" .jsonl; return 0
   done < <(ls -t "$d"/*.jsonl 2>/dev/null)
 }

@@ -31,18 +31,27 @@ trap 'rm -rf "$HOME"' EXIT
 cwd="/home/matleniz/mlops-hub"
 d="$HOME/.claude/projects/$(_claude_proj_slug "$cwd")"; mkdir -p "$d"
 
-mk() {  # <name> <mtime> <has-assistant:0|1>
+mk() {  # <name> <mtime> <has-assistant:0|1> [bg]
   local f="$d/$1.jsonl"
-  if [ "$3" = 1 ]; then printf '%s\n' '{"type":"user"}' '{"type":"assistant","timestamp":"x"}' > "$f"
+  if [ "$3" = 1 ]; then
+    local kind=""; [ "${4:-}" = bg ] && kind=',"sessionKind":"bg"'
+    printf '%s\n' "{\"type\":\"user\"$kind}" '{"type":"assistant","timestamp":"x"}' > "$f"
   else printf '%s\n' '{"type":"queue-operation"}' > "$f"; fi
   touch -d "$2" "$f"
 }
 mk real-old  '2026-07-20 10:00:00' 1
 mk real-last '2026-07-20 15:00:00' 1
-mk aborted   '2026-07-20 15:05:00' 0   # NEWEST mtime, but reply-less
+mk aborted   '2026-07-20 15:05:00' 0        # NEWEST-but-one, reply-less
+mk bg-agent  '2026-07-20 15:10:00' 1 bg     # NEWEST mtime, has replies, but background agent
 
-# --- 2. last-session picks the newest REAL one, skipping the aborted newest ----
-eq "last id skips aborted newest" "$(_claude_last_session_id "$cwd")" "real-last"
+# --- 2. last-session picks the newest REAL INTERACTIVE one, skipping the -------
+#        reply-less 'aborted' AND the newer background-agent session.
+eq "last id skips aborted + bg" "$(_claude_last_session_id "$cwd")" "real-last"
+
+# a dir with ONLY a bg session -> empty (don't resume someone's background agent)
+d4="$HOME/.claude/projects/$(_claude_proj_slug "/only/bg")"; mkdir -p "$d4"
+printf '%s\n' '{"type":"user","sessionKind":"bg"}' '{"type":"assistant"}' > "$d4/b.jsonl"
+eq "empty id when only a bg session" "$(_claude_last_session_id "/only/bg")" ""
 
 # --- 3. pack_has_sessions resolves a dotted/underscored cwd (munging fix) ------
 d2="$HOME/.claude/projects/$(_claude_proj_slug "/x/foo_bar.baz")"; mkdir -p "$d2"; : > "$d2/s.jsonl"

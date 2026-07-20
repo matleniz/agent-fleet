@@ -133,7 +133,11 @@ Follow-up fixes (2026-07-20):
   --continue`, which for dispatch-spawned (headless) cwds falls back to an mtime
   scan — a launch aborted at startup leaves a fresh-mtime, reply-less `.jsonl`
   that shadows the real conversation. Now resolves the last session that has an
-  assistant reply and passes `--resume <id>` (fallback `--continue`). Fixed a
+  assistant reply AND is not a background-agent session (`"sessionKind":"bg"`,
+  from `fleet dispatch` / `claude agents` — a running one can't be `--resume`d at
+  all: "currently running as a background agent"), then passes `--resume <id>`
+  (fallback `--continue`). This is the "it confuses sessions and subagents" case.
+  Fixed a
   companion bug the audit surfaced: the claude pack munged session-dir paths with
   `s#/#-#g`, but Claude Code maps EVERY non-alphanumeric char to `-` (verified
   against the installed CLI), so any cwd with a `.`/`_` missed its sessions
