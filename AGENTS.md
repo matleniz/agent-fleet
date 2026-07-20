@@ -45,15 +45,17 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
   (context reporter).
 - `docs/` — the model (`01`-`07`). `BOOTSTRAP.md` — the setup prompt.
 
-## Provenance and isolation (transition period)
-Forked from `claude-fleet` (history preserved). The legacy fleet keeps running
-from `~/claude-fleet` + `~/.config/claude-fleet` while this repo evolves; this
-one uses `FLEET_*` env vars + `~/.config/fleet`. NEVER add a fallback that reads
-the legacy config dir — the new tools must not be able to resolve the legacy
-fleet's real projects. `fleet-config.sh` enforces this: it refuses to run if
-`FLEET_HOME` resolves to a `claude-fleet` path. Cutover is explicit:
-`fleet-migrate`. Test only against the sandbox (`test/make-sandbox.sh`), never a
-real repo.
+## Provenance and isolation (legacy decommissioned)
+Forked from `claude-fleet` (history preserved). The legacy fleet was
+decommissioned on 2026-07-20: its local dirs (`~/claude-fleet` +
+`~/.config/claude-fleet`) are gone and every project now runs on this repo with
+`FLEET_*` env vars + `~/.config/fleet`. The old history is archived on the
+private `github.com/matleniz/claude-fleet` repo, reclonable if ever needed.
+NEVER add a fallback that reads a legacy config dir: the tools must not resolve a
+re-cloned legacy fleet's real projects. `fleet-config.sh` still enforces this (it
+refuses to run if `FLEET_HOME` resolves to a `claude-fleet` path), and
+`fleet-migrate` is kept for a one-off migration off any such re-clone. Test only
+against the sandbox (`test/make-sandbox.sh`), never a real repo.
 
 ## Keep docs in sync with the tools (this repo's one real risk)
 The docs describe the tools. When you change `bin/` (flags, commands, resolution
