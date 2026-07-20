@@ -1021,7 +1021,7 @@ global_report() {
 # dir). This replaces hand-copying template skills to the user level and the
 # drift that follows. There is deliberately NO bulk no-name sync: an installed
 # copy may carry local customization, so `status` shows the drift and the human
-# names what to replace (the previous copy is kept at <name>.bak).
+# names what to replace (the previous copy is kept in a sibling skills.bak/).
 global_skills_dir() { echo "${FLEET_GLOBAL_SKILLS:-$HOME/.agents/skills}"; }
 
 global_skill_state() {  # <name> -> in-sync | drifted | not-installed
@@ -1045,7 +1045,7 @@ global_skills_status() {
     [ -f "$d/SKILL.md" ] || continue
     printf '  %-24s %-14s claude:%s\n' "$name" "$(global_skill_state "$name")" "$(global_skill_wiring "$name")"
   done
-  echo "sync (replaces; previous copy kept at <name>.bak):  fleet global skills sync <name>... | --all"
+  echo "sync (replaces; previous copy kept in a sibling skills.bak/):  fleet global skills sync <name>... | --all"
 }
 
 global_skill_sync() {  # <name> — install/refresh one skill + (re)wire the claude symlink

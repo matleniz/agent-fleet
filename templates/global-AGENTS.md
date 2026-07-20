@@ -14,8 +14,8 @@ Skills work the same way: `fleet global skills` compares the engine's
 `~/.claude/skills/`), and `fleet global skills sync <name>` (or `--all`)
 installs/refreshes one — no more hand-copying that drifts. Sync is deliberately
 name-by-name: an installed copy may carry your local customization, so `status`
-shows the drift and you choose what to replace (previous copy kept at
-`<name>.bak`).
+shows the drift and you choose what to replace (previous copy kept in a sibling
+`skills.bak/` dir, outside what the CLIs scan).
 
 How each CLI is pointed at the one canonical file:
 
