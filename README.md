@@ -173,7 +173,10 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    ```
    Every session runs inside tmux (local mirrors the VM), so it survives a
    disconnect and stays observable/controllable — `fleet peek`/`send` from a
-   laptop or phone, `fleet attach` to jump in. A worktree is agnostic: every
+   laptop or phone, `fleet attach` to jump in. Reopening a window whose agent
+   process died relaunches the agent in place (same resume offer as a fresh
+   launch) — never relaunch the CLI by hand, that would skip the fleet posture.
+   A worktree is agnostic: every
    enabled pack sets it up, so any enabled agent can open it. Sessions never
    transfer between agents; what crosses over is the branch, the commits, and
    the written context.

@@ -362,26 +362,67 @@ if [ -n "\${TMUX:-}" ]; then exec tmux switch-client -t "\$V"; else exec tmux at
 SNIP
 }
 
+# Emit a shell script that ensures window <win> of session <sess> exists AND is
+# running its agent (same transport story as view_snippet: bash -c locally,
+# base64 through ssh+docker remotely). Creating a missing window is the easy
+# half. The subtle half is a window whose agent DIED: every window is launched
+# as "<cmd>; exec bash", so when the agent exits the window survives as a bare
+# fallback shell — a plain select would silently focus that dead session and the
+# operator ends up relaunching the CLI by hand, outside the fleet posture (auto
+# mode, barrier, MCP profile). Instead, detect the dead pane and respawn the
+# ORIGINAL launch line into it: it re-enters the in-window fleet, so the
+# operator gets the same resume offer as on first creation — a dead window is
+# indistinguishable from a fresh one.
+# Dead-detection (verified empirically, tmux 3.4): #{pane_current_command} is
+# NOT enough — the "<cmd>; exec bash" wrapper does no job control, so an ALIVE
+# window also reports a shell. The discriminator is children of #{pane_pid}: an
+# alive pane has the agent (or the in-window fleet at its resume prompt, or a
+# command the operator ran in the fallback shell) as a child; a dead pane is a
+# childless shell. No ps on the box → cannot tell → leave the pane alone (old
+# select behavior, never kill something we cannot prove dead).
+ensure_window_snippet() {  # <sess> <win> <inner-cmd>
+  local sess="$1" win="$2" wcmd
+  wcmd="$(printf '%q' "$3; exec bash")"
+  cat <<SNIP
+tmux has-session -t "$sess" 2>/dev/null || tmux new-session -d -s "$sess" -n _home
+if tmux list-windows -t "$sess" -F '#{window_name}' 2>/dev/null | grep -Fxq "$win"; then
+  info="\$(tmux display-message -p -t "$sess:$win" '#{pane_pid} #{pane_current_command}' 2>/dev/null || true)"
+  pid="\${info%% *}"; cmd="\${info##* }"
+  case "\$cmd" in
+    bash|sh|dash|ash|zsh|ksh|fish)
+      if [ -n "\$pid" ] && command -v ps >/dev/null 2>&1 \
+         && ! ps -o pid= --ppid "\$pid" 2>/dev/null | grep -q .; then
+        echo "[fleet] window '$win': agent process died — relaunching"
+        tmux respawn-pane -k -t "$sess:$win" $wcmd
+      fi ;;
+  esac
+  tmux select-window -t "$sess:$win" 2>/dev/null || true
+else
+  tmux new-window -d -t "$sess" -n "$win" $wcmd
+fi
+SNIP
+}
+
 # Open (or reuse) window <win> on the target machine running the given fleet
 # subcommand, then attach through a private view. Local = plain tmux; remote =
-# ssh + docker exec tmux (the view snippet is base64'd so its quotes survive the
-# ssh+docker nesting, same transport as guard_probe).
+# ssh + docker exec tmux (both snippets are base64'd so their quotes survive the
+# ssh+docker nesting, same transport as guard_probe). A window whose agent died
+# is relaunched by ensure_window_snippet before the view attaches.
 session_window() {  # <win> <fleet args...>
   local win="$1"; shift
   local inner; inner="$(window_cmd "$@")"
+  local ensure; ensure="$(ensure_window_snippet "$M_TMUX" "$win" "$inner")"
   if [ "$M_LOCAL" = 1 ]; then
     command -v tmux >/dev/null || { echo "error: tmux not installed (needed for sessions)" >&2; exit 2; }
-    tmux has-session -t "$M_TMUX" 2>/dev/null || tmux new-session -d -s "$M_TMUX" -n _home
-    tmux select-window -t "$M_TMUX:$win" 2>/dev/null \
-      || tmux new-window -d -t "$M_TMUX" -n "$win" "$inner; exec bash"
+    bash -c "$ensure"
     local snip; snip="$(view_snippet "$M_TMUX" "$win")"
     exec bash -c "$snip"
   else
     version_preflight   # non-fatal warning if the VM engine lags the local one
-    local create b64
-    create="tmux has-session -t $M_TMUX 2>/dev/null || tmux new-session -d -s $M_TMUX -n _home; tmux select-window -t $M_TMUX:$win 2>/dev/null || tmux new-window -d -t $M_TMUX -n $win \"$inner; exec bash\""
-    b64="$(view_snippet "$M_TMUX" "$win" | base64 | tr -d '\n')"
-    exec ssh -t "$M_HOST" "docker exec -it $M_CONTAINER bash -lc '$create; echo $b64 | base64 -d | bash'"
+    local b64e b64v
+    b64e="$(printf '%s' "$ensure" | base64 | tr -d '\n')"
+    b64v="$(view_snippet "$M_TMUX" "$win" | base64 | tr -d '\n')"
+    exec ssh -t "$M_HOST" "docker exec -it $M_CONTAINER bash -lc 'echo $b64e | base64 -d | bash; echo $b64v | base64 -d | bash'"
   fi
 }
 

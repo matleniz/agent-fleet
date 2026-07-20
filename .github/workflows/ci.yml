@@ -45,7 +45,8 @@ jobs:
           for t in test/docs-sync.sh test/test-context.sh test/test-guard.sh \
                    test/test-chats-scan.sh test/test-feedback-pipeline.sh \
                    test/global.sh test/test-mcp-profile.sh \
-                   test/dispatch.sh test/barrier-guard.sh test/barrier-cursor.sh; do
+                   test/dispatch.sh test/relaunch.sh \
+                   test/barrier-guard.sh test/barrier-cursor.sh; do
             echo "::group::$t"
             bash "$t"
             echo "::endgroup::"

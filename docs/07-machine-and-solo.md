@@ -87,6 +87,11 @@ Instead each `fleet` / `fleet w` / `fleet attach` opens a private **view** — a
 grouped tmux session (named `fv-*`) that shares the machine session's window
 list, so new workers still appear, but keeps its own active window and
 self-destructs when you detach. Launching a worker never drags another terminal.
+Windows are launched as `"<cmd>; exec bash"`, so a window outlives its agent as
+a fallback shell; reopening it (`fleet` / `fleet w <name>`, local or remote)
+detects the dead pane — a childless shell — and respawns the launch into it,
+resume offer included. An alive agent, or anything you ran in the fallback
+shell, is never killed.
 The `fv-*` prefix is also why the worker count below (which scans `fleet*`
 sessions) never double-counts a view's shared windows.
 
