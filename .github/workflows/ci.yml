@@ -46,6 +46,8 @@ jobs:
                    test/test-chats-scan.sh test/test-feedback-pipeline.sh \
                    test/global.sh test/test-mcp-profile.sh \
                    test/dispatch.sh test/relaunch.sh \
+                   test/test-name-validation.sh test/test-new-worker.sh \
+                   test/test-legacy-isolation.sh \
                    test/barrier-guard.sh test/barrier-cursor.sh; do
             echo "::group::$t"
             bash "$t"

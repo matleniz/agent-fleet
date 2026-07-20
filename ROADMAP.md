@@ -3,7 +3,7 @@
 Near-term priorities for agent-fleet, most urgent first. Longer-tail vetted ideas
 live in `BACKLOG.md`.
 
-## Security hardening (adversarial audit 2026-07-20)  [unfixed]
+## Security hardening (adversarial audit 2026-07-20)  [all fixed 2026-07-20]
 
 An adversarial code review found that each of the three core safety invariants
 (hub read-only, container isolation, legacy-config isolation) holds on the ONE
@@ -12,7 +12,21 @@ reaches the same resource. Findings 1-3 break a promise the product sells;
 verified empirically (findings 1 and 3 by running the tool, finding 2 by
 reproducing the exact SSH command string). Most severe first.
 
-### S1 — symlink bypass of the hub read-only barrier (claude + gemini)  [CRITICAL]
+All seven were fixed in one pass (5 parallel workstreams, one branch each,
+merged sequentially): S1+S5 shared `hub-readonly-guard.py`; S2 `bin/fleet`; S3
+`fleet_common.py` + the 4 Python tools; S6+S7 `new-worker` + `fleet_valid_name`;
+S4 the guard lock. Each fix ships its own test (`test/test-name-validation.sh`,
+`test/test-new-worker.sh`, `test/test-legacy-isolation.sh`, plus new cases in
+`barrier-guard.sh` and `test-guard.sh`). Two things surfaced during the fix and
+are worth keeping in view: (a) S2 had a **4th** injectable site the audit
+missed — the `w|worker` case of `cmd_remote` (`fleet r w`), where the window
+name interpolates into a heredoc before base64; now validated too. (b) S4's lock
+fully closes `fleet dispatch` (local and remote) and local `fleet w`, but for
+`fleet w` against a REMOTE machine `session_window` runs ensure+attach in one
+ssh call, so the lock releases just before create-confirmation — the race is
+narrowed, not closed, in that one case (documented in `bin/fleet`).
+
+### S1 — symlink bypass of the hub read-only barrier (claude + gemini)  [CRITICAL] — DONE
 `bin/hub-readonly-guard.py:20,31` resolves candidate paths with `os.path.abspath`,
 never `realpath`. A symlink created inside the worktree that points at a hub file
 has a literal path that is under the hub in neither absolute nor relative form:
@@ -31,7 +45,7 @@ applies to the mounted inode regardless of the path used to reach it.
   share the same "not write-proof" caveat as claude/gemini — today docs/02 admits
   only the shell-redirect hole, not this one.
 
-### S2 — command injection via unvalidated name → exec on the remote HOST, outside the container  [CRITICAL]
+### S2 — command injection via unvalidated name → exec on the remote HOST, outside the container  [CRITICAL] — DONE
 `fleet_valid_name` (`bin/fleet-config.sh:200`) restricts names to `[a-zA-Z0-9._-]`
 precisely because they thread UNQUOTED through composed tmux/ssh/docker strings —
 but it is called at only 3 sites (`bin/fleet:254`, `bin/fleet:853`,
@@ -46,7 +60,7 @@ bypass-mode workers — the exact isolation the Docker deploy exists to provide.
   one validation choke point before it reaches any SSH string — 3 calls for 6+
   entry points that need it shows "each cmd_* remembers" does not hold.
 
-### S3 — legacy-config isolation enforced only in bash, bypassed by the Python tools  [HIGH]
+### S3 — legacy-config isolation enforced only in bash, bypassed by the Python tools  [HIGH] — DONE
 `AGENTS.md` forbids any fallback that resolves the legacy `claude-fleet` config.
 `bin/fleet-config.sh:25-32` enforces it (refuses to run if `FLEET_HOME` is a
 `claude-fleet` path). But the 4 standalone Python tools resolve `FLEET_HOME`
@@ -57,7 +71,7 @@ project, rc=0 — leaks real third-party project paths/hub/worktrees.
 - Fix: factor the guard into a shared helper in `bin/fleet_common.py` (already
   imported by these scripts) and call it before any `FLEET_ROOT` resolution.
 
-### S4 — admission guard has a TOCTOU race (no lock)  [MEDIUM]
+### S4 — admission guard has a TOCTOU race (no lock)  [MEDIUM] — DONE
 `fleet_guard` (`bin/fleet-config.sh:421`) probes live tmux windows, compares to
 `MAX_WORKERS`, returns — the window/worktree is created only afterwards by the
 caller, with no lock between check and create. N near-simultaneous `fleet dispatch`
@@ -67,7 +81,7 @@ prevent ([[fleet-crash-resource-mgmt]]). Fix: `flock` around probe→admit→cre
 scoped per machine. (Note: the stale line refs `:288-311` / `:252-266` in the
 Diagnosis section below should be corrected to `:421` / `:385` in the same pass.)
 
-### S5 — guard fails open on unreadable JSON  [MEDIUM]
+### S5 — guard fails open on unreadable JSON  [MEDIUM] — DONE
 `bin/hub-readonly-guard.py:24-25` `except Exception: sys.exit(0)`. Deliberate
 ("never break unrelated tool calls"), but combined with S1 it means the second
 line of defense also does not hold: a malformed / truncated hook invocation drops
@@ -75,14 +89,14 @@ the barrier instead of holding it — contradicts the "fail closed" stance docs/
 claims for the mount-namespace packs. Lower residual risk than S1 (stdin is not
 normally worker-controlled). Reconsider once S1 is fixed.
 
-### S6 — `fleet_valid_name` accepts `.` / `..` and dot-only names  [LOW]
+### S6 — `fleet_valid_name` accepts `.` / `..` and dot-only names  [LOW] — DONE
 `bin/fleet-config.sh:200`: the charset `[a-zA-Z0-9._-]` accepts `.` and `..`. In
 `bin/new-worker:47-48` `dest="$WT_HOME/$name"` with `name=".."` points at the
 parent of `WT_HOME`; currently neutralized only because `[ -e "$dest" ]` finds it
 existing — an accidental guard, with a race window if `WT_HOME` does not yet exist
 (`mkdir -p` follows at :53). Fix: reject `.`, `..`, and dot-only names explicitly.
 
-### S7 — TOCTOU on worktree creation  [LOW]
+### S7 — TOCTOU on worktree creation  [LOW] — DONE
 `bin/new-worker:47-55`: between the `[ -e "$dest" ]` / `git show-ref` checks and
 `git worktree add`, two concurrent same-name calls can both pass the checks.
 Benign (the second `worktree add` likely fails) but an untested failure mode — add
@@ -190,7 +204,7 @@ The freeze is a memory chain, compounded by a launch-time-only guard:
    Claude Code long sessions (heap to 90-120 GB before OOM-kill, V8
    `CheckIneffectiveMarkCompact`). The fleet runs N of them in parallel → N× the
    leak. Refs: anthropics/claude-code#4953, #56693, #22188, #24658.
-3. **`fleet_guard` is admission-only.** `bin/fleet-config.sh:288-311`. Checks
+3. **`fleet_guard` is admission-only.** `bin/fleet-config.sh:426`. Checks
    `MemAvailable` once, before launch. Defaults `MAX_WORKERS=6`,
    `MIN_FREE_MB=2048` (`fleet-config.sh:44-45`) are tuned for a big box. Once
    workers are running, nothing watches their growth: no per-process heap cap
@@ -202,7 +216,7 @@ The freeze is a memory chain, compounded by a launch-time-only guard:
    worktree but never `tmux kill-window` the local worker window (asymmetric with
    the remote path `bin/fleet:413`). Dispatch windows are kept open "for
    inspection" (`bin/fleet:776-778`). Dead windows accumulate and are counted by
-   the guard (`guard_probe_snippet`, `fleet-config.sh:252-266`) → false blocks →
+   the guard (`guard_probe_snippet`, `fleet-config.sh:390`) → false blocks →
    operators reach for `--force`/`FLEET_NO_GUARD=1` → the only rail is disabled.
    `events.log` + `.status`/`.meta` are never GC'd (slow unbounded growth).
 
