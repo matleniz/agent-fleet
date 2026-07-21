@@ -178,14 +178,14 @@ Shipped as a **3-stage pipeline** (A extract / B compress / C distill + finalize
 see `docs/04-routines.md` "The conversation-feedback pipeline"):
 - **A extract** — `fleet chats --scan [--all] [--parse] [--history] [--since ISO]
   [--json]` (`bin/fleet-chats-scan.py`): fleet-wide inventory of every pack's
-  recorded conversation, with `--parse` attaching a claude-first method signal via
-  `bin/fleet_chat_parse.py` (user corrections, tool errors, tool histogram).
+  recorded conversation, with `--parse` attaching a method signal (claude + cursor)
+  via `bin/fleet_chat_parse.py` (user corrections, tool errors, tool histogram).
   `--history` (the retro's real input) emits one entry per transcript file over the
   `--since` window, **including finished workers whose worktree was deleted** — the
   default scan only gives the latest pointer per live worktree, which misses almost
-  all history on a fleet that deletes workers. Claude-first via `pack_chat_history`;
-  packs without it fall back to the default per-location scan. Deterministic, no
-  model. Local machine only.
+  all history on a fleet that deletes workers. Claude and cursor via
+  `pack_chat_history`; packs without it fall back to the default per-location scan.
+  Deterministic, no model. Local machine only.
 - **B compress** — the `conversation-compress` skill (`templates/skills/`): cheap
   model, frequent, LOCAL (the confidentiality + compression boundary). One session
   note per new transcript at `$FLEET_HOME/feedback-notes/<session_id>.json`; the
@@ -214,10 +214,14 @@ Remaining:
   cloud agent and getting candidate lessons back. The repo ships the contract +
   the local default (`FEEDBACK_RUNNER=local`); a cloud plug is wired per instance,
   following the `fleet status --remote` ssh pattern for the ssh case.
-- **Non-claude transcript parsers** (gemini `chats/`, antigravity SQLite, copilot
-  session-state, cursor, opencode) — inventory-only today; each plugs in at the
-  parser layer (`fleet_chat_parse.detect_format` + a sibling parser), no scanner
-  change. Deferred until needed.
+- **The remaining non-claude transcript parsers** (gemini `chats/`, antigravity
+  SQLite, copilot session-state, opencode) — inventory-only today; each plugs in at
+  the parser layer (`fleet_chat_parse.detect_format` + a sibling `_parse_*`) plus a
+  `pack_chat_history` in its pack, no scanner change. **Cursor is done**
+  (`_parse_cursor` + `packs/cursor/pack.sh`, the polytech-llm-lab fleet was the real
+  need); its limits generalize — a pack whose transcript has no per-turn timestamp
+  or `tool_result` blocks yields prompts + tool histogram but no `tool_errors`.
+  Deferred until needed.
 
 Why now: the fleet already scales *work* across many sessions but has no loop that
 scales *learning* from them; every session repeats avoidable mistakes.

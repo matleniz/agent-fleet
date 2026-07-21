@@ -8,14 +8,14 @@ the whole fleet — every project in $FLEET_HOME/projects, the hub (coordinator)
 plus every worktree (workers), every enabled pack — and emits a normalized
 inventory of the conversation pointers each pack recorded. That inventory is the
 input the conversation-feedback routine (docs/04-routines.md) reads, then feeds
-the claude ones through fleet_chat_parse.py.
+the claude and cursor ones through fleet_chat_parse.py.
 
 Two modes. DEFAULT: one latest pointer per LIVE location (hub + current worktrees)
 — for a quick "what is recorded where" / reprise. `--history` (the retro's stage-B
 input): one entry per transcript FILE over the window, including finished workers
-whose worktree was deleted (their ~/.claude history survives del/prune), for packs
-that implement pack_chat_history (claude today; others fall back to default). Pair
-with `--since ISO` to bound the window.
+whose worktree was deleted (their recorded history survives del/prune), for packs
+that implement pack_chat_history (claude and cursor today; others fall back to
+default). Pair with `--since ISO` to bound the window.
 
 Local machine only: transcripts are local and private (docs/04 cloud-vs-local).
 A remote machine would follow the `fleet status --remote` ssh pattern — not
@@ -25,7 +25,7 @@ contract like fleet-status.py / fleet-context.py).
 Pointer semantics vary by pack (see each pack's pack_chat_pointer): claude/cursor/
 copilot/gemini return a path (file or dir), opencode returns a shell command, and
 antigravity returns a conversation id. Each entry carries is_file so a consumer
-knows whether it can open the pointer directly (only claude's is parsed today).
+knows whether it can open the pointer directly (claude's and cursor's are parsed).
 """
 
 import datetime
@@ -214,12 +214,13 @@ def project_conversations(env, pdir, parse=False, since=None, history=False):
             if since is not None:
                 ents = [c for c in ents if c["mtime"] is None or c["mtime"] >= since]
         convs.extend(ents)
-    # Optional: attach the parsed method signal for each claude transcript we can
-    # open. Only claude's JSONL is parsed today (fleet_chat_parse is claude-first);
-    # other packs' pointers pass through without a `parsed` key.
+    # Optional: attach the parsed method signal for each transcript we can open.
+    # fleet_chat_parse covers claude + cursor JSONL; other packs' pointers are not
+    # files (opencode = a shell command, gemini/antigravity = a dir/id), so they
+    # pass through without a `parsed` key.
     if parse:
         for c in convs:
-            if c["pack"] == "claude" and c["is_file"]:
+            if c["pack"] in ("claude", "cursor") and c["is_file"]:
                 c["parsed"] = parse_transcript(c["pointer"])
     convs.sort(key=lambda c: c["mtime"] or 0, reverse=True)
     return {

@@ -9,15 +9,17 @@ conversation; this turns ONE recorded conversation into the raw material a
 routine reasons over — user prompts (including follow-up corrections), the
 tool-use histogram, and tool errors — without shipping the whole transcript.
 
-Coverage is claude-first: only Claude Code's JSONL format is parsed here (the
-one format with prior groundwork). The scanner is pack-agnostic; other packs'
+Coverage is claude + cursor: both Claude Code's and the Cursor CLI's JSONL
+formats are parsed here. The scanner is pack-agnostic; the remaining packs'
 formats (gemini chats/, antigravity SQLite, ...) get their own parser when their
-transcripts are wired in. detect_format() guards against feeding a non-claude
-pointer in. Reads only; changes nothing.
+transcripts are wired in. detect_format() tags the format (or returns None for a
+non-transcript pointer, e.g. an opencode shell command) so parse_transcript can
+dispatch. Reads only; changes nothing.
 """
 
 import json
 import os
+import re
 import sys
 
 # Transcript line `type`s that are real conversational turns (vs bookkeeping:
@@ -40,12 +42,18 @@ _PROMPT_MAX = 500  # truncate each captured user prompt
 _ERROR_MAX = 300  # truncate each captured tool-error snippet
 _MAX_ERRORS = 20  # cap error samples per transcript
 
+# Cursor wraps each human turn as <timestamp>..</timestamp><user_query>..</user_query>,
+# and in a headless (`-p`) run injects an auto-continue nudge as a user turn.
+_USER_QUERY_RE = re.compile(r"<user_query>(.*?)</user_query>", re.DOTALL)
+_CURSOR_NUDGE_PREFIXES = ("Briefly inform the user about the task result",)
+
 
 def detect_format(path):
-    """Best-effort: is this a Claude Code JSONL transcript? True if the first
-    decodable line is a JSON object carrying a `type` key (claude's shape).
-    Returns False for empty files, non-JSON, or non-claude pointers (e.g. an
-    opencode pointer is a shell command string, a gemini pointer is a dir)."""
+    """Best-effort transcript format tag from the first decodable line:
+    "claude" (a JSON object carrying a top-level `type` key), "cursor" (a
+    role-tagged {role, message} object with no top-level `type`), or None for an
+    empty file, non-JSON, or a non-transcript pointer (an opencode pointer is a
+    shell command string, a gemini pointer is a dir)."""
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -53,10 +61,16 @@ def detect_format(path):
                 if not line:
                     continue
                 obj = json.loads(line)
-                return isinstance(obj, dict) and "type" in obj
+                if not isinstance(obj, dict):
+                    return None
+                if "type" in obj:
+                    return "claude"
+                if "role" in obj and "message" in obj:
+                    return "cursor"
+                return None
     except (OSError, ValueError):
-        return False
-    return False
+        return None
+    return None
 
 
 def _text_blocks(content):
@@ -97,12 +111,101 @@ def _is_real_user_prompt(obj):
 
 
 def parse_transcript(path):
-    """Read a Claude Code JSONL transcript into a compact signal dict. Never
-    raises on a malformed line (skips it); returns {"error": ...} only if the
-    file cannot be read or is not a claude transcript at all."""
-    if not detect_format(path):
-        return {"transcript": path, "error": "not a claude JSONL transcript"}
+    """Read one agent JSONL transcript into a compact signal dict, dispatching on
+    the detected format. Never raises on a malformed line (skips it); returns
+    {"error": ...} only if the file cannot be read or the format is unrecognized."""
+    fmt = detect_format(path)
+    if fmt == "claude":
+        return _parse_claude(path)
+    if fmt == "cursor":
+        return _parse_cursor(path)
+    return {"transcript": path, "error": "unrecognized transcript format"}
 
+
+def _cursor_user_text(content):
+    """The human prompt text of a cursor user turn: the <user_query> bodies with
+    the <timestamp> envelope dropped. Falls back to the raw joined text when there
+    is no <user_query> tag."""
+    joined = "\n".join(_text_blocks(content)).strip()
+    if not joined:
+        return ""
+    queries = _USER_QUERY_RE.findall(joined)
+    text = "\n".join(q.strip() for q in queries) if queries else joined
+    return text.strip()
+
+
+def _parse_cursor(path):
+    """Read a Cursor CLI JSONL transcript into the same compact signal dict as
+    _parse_claude. Cursor turns are role-tagged ({role, message:{content:[...]}})
+    with no top-level type, no per-turn ISO timestamp, and no tool_result blocks —
+    so started/ended stay None (the scanner carries the file mtime) and tool_errors
+    is always empty. session_id is the transcript's uuid filename, which keeps the
+    stage-B dedup (feedback-notes/<session_id>.json) stable and unique per run."""
+    session_id = os.path.splitext(os.path.basename(path))[0]
+    counts = {
+        "user_prompts": 0,
+        "assistant_turns": 0,
+        "thinking": 0,
+        "tool_use": 0,
+        "tool_errors": 0,
+    }
+    tools = {}
+    user_prompts = []
+
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+
+            role = obj.get("role")
+            content = obj.get("message", {}).get("content")
+            if role == "assistant" and isinstance(content, list):
+                counts["assistant_turns"] += 1
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    bt = block.get("type")
+                    if bt == "thinking":
+                        counts["thinking"] += 1
+                    elif bt == "tool_use":
+                        counts["tool_use"] += 1
+                        name = block.get("name", "?")
+                        tools[name] = tools.get(name, 0) + 1
+            elif role == "user":
+                text = _cursor_user_text(content)
+                if (
+                    text
+                    and not text.startswith(_WRAPPER_PREFIXES)
+                    and not text.startswith(_CURSOR_NUDGE_PREFIXES)
+                ):
+                    counts["user_prompts"] += 1
+                    user_prompts.append(text[:_PROMPT_MAX])
+
+    return {
+        "transcript": path,
+        "session_id": session_id,
+        "cwd": None,
+        "git_branch": None,
+        "version": None,
+        "started": None,
+        "ended": None,
+        "counts": counts,
+        "tools": dict(sorted(tools.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "user_prompts": user_prompts,
+        "tool_errors": [],
+    }
+
+
+def _parse_claude(path):
+    """Read a Claude Code JSONL transcript into a compact signal dict. Never
+    raises on a malformed line (skips it)."""
     session_id = cwd = git_branch = version = None
     started = ended = None
     counts = {

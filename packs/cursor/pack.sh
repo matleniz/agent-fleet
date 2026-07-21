@@ -36,6 +36,49 @@ pack_chat_pointer() {
   [ -d "$d" ] && ls "$d"/* >/dev/null 2>&1 && echo "$d"
 }
 
+# Cursor also records a parseable JSONL transcript per run under
+# ~/.cursor/projects/<slug>/agent-transcripts/<uuid>/<uuid>.jsonl, where <slug> is
+# the absolute cwd with every non-alnum char turned into '-' and no leading dash
+# (claude keeps the leading dash; cursor drops it — verified against agent
+# 2026.07.09). This is what the conversation-feedback retro reads, not the
+# ~/.cursor/chats/<md5> metadata dir pack_chat_pointer returns.
+_cursor_proj_slug() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g; s/^-*//'; }
+
+# Emit one TSV line per transcript under <dir>/agent-transcripts newer than
+# <since_epoch> ("" = no floor): <role>\t<worktree>\t<cwd>\t<path>\t<mtime>.
+_cursor_emit_transcripts() {  # <role> <worktree> <cwd> <dir> <since_epoch>
+  local role="$1" wtn="$2" cwd="$3" dir="$4" since="${5%.*}" f m
+  [ -d "$dir/agent-transcripts" ] || return 0
+  for f in "$dir"/agent-transcripts/*/*.jsonl; do
+    [ -e "$f" ] || continue
+    m="$(stat -c %Y "$f" 2>/dev/null)" || continue
+    { [ -z "$since" ] || [ "$m" -ge "$since" ]; } || continue
+    printf '%s\t%s\t%s\t%s\t%s\n' "$role" "$wtn" "$cwd" "$f" "$m"
+  done
+}
+
+# Optional: enumerate ALL recorded transcripts for a PROJECT over a window — the
+# retro's history (docs/04), not just the latest pointer per live worktree. One
+# line per session file for the hub (coordinator) AND every cwd under WT_HOME,
+# INCLUDING finished workers whose worktree was deleted (their ~/.cursor/projects
+# history survives del/prune). Args: <hub_dir> <wt_home_dir> <since_epoch|"">.
+pack_chat_history() {  # <hub_dir> <wt_home_dir> <since_epoch>
+  local hub="$1" wt_home="$2" since="${3:-}" root="$HOME/.cursor/projects"
+  local slug wt_slug d name
+  if [ -n "$hub" ]; then
+    slug="$(_cursor_proj_slug "$hub")"
+    _cursor_emit_transcripts coordinator - "$hub" "$root/$slug" "$since"
+  fi
+  if [ -n "$wt_home" ]; then
+    wt_slug="$(_cursor_proj_slug "$wt_home")"
+    for d in "$root/$wt_slug"-*/; do
+      [ -d "$d" ] || continue
+      name="$(basename "$d")"; name="${name#"$wt_slug"-}"
+      _cursor_emit_transcripts worker "$name" "$wt_home/$name" "$d" "$since"
+    done
+  fi
+}
+
 # Worktree-relative files pack_worker_setup writes (the core ignores them
 # when judging a worktree dirty for del/prune).
 pack_barrier_files() { echo ".cursor/cli.json"; echo ".cursor/rules/00-fleet-user.mdc"; }

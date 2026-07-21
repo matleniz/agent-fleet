@@ -93,8 +93,8 @@ rule above: cloud has no prod keys).
   scan returns only the latest pointer per live worktree, so a fleet that deletes
   finished workers would expose almost none of its history; `--history` emits one
   entry per transcript file over the window, finished/deleted workers included
-  (their `~/.claude` history survives `del`/`prune`). Claude-first (via the pack's
-  `pack_chat_history`); packs without it fall back to the default per-location scan.
+  (their recorded history survives `del`/`prune`). Claude and cursor today (via the
+  pack's `pack_chat_history`); packs without it fall back to the per-location scan.
 - B -> notes: one file per transcript at `$FLEET_HOME/feedback-notes/<session_id>.json`;
   the file's existence is the dedup (B skips a transcript whose note exists).
 - notes -> C: the notes, transcript paths stripped. No ledger, no creds.

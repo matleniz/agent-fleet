@@ -40,6 +40,16 @@ Unreleased until the first one.
   fleet where the scoped default scan saw 1 conversation and `--history` saw 45.
   Claude-first via a new optional `pack_chat_history`; packs without it fall back to
   the default per-location scan.
+- Cursor transcript coverage for the feedback retro: `fleet_chat_parse` now parses
+  the Cursor CLI's JSONL (a `_parse_cursor` beside `_parse_claude`, dispatched by a
+  format-tagging `detect_format`), and `packs/cursor/pack.sh` gains a
+  `pack_chat_history` over `~/.cursor/projects/<slug>/agent-transcripts/`. Unwraps
+  the `<timestamp>`/`<user_query>` envelope and filters the headless auto-continue
+  nudge; `session_id` comes from the transcript filename. Cursor has no per-turn
+  timestamp or `tool_result`, so it yields prompts + tool histogram but no
+  `tool_errors` (started/ended stay null; the scanner carries the file mtime). This
+  unblocks a claude-banned fleet (e.g. one running `AGENTS="cursor ..."`) that the
+  retro was otherwise blind to.
 - Lesson targets: a distilled lesson is `project` (per-project queue, unchanged),
   `global` (fleet-wide, → digest section for the user to apply by hand), or
   `upstream` (a generic tooling lesson for the public agent-fleet repo, → digest

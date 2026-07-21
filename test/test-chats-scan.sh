@@ -148,6 +148,85 @@ sys.exit(1 if fails else 0)
 PY
 [ $? -eq 0 ] && ok "parse-inline checks passed" || bad "parse-inline checks failed"
 
+# ---- cursor fixture: a cursor project over the same repo/hub/worktree ----
+# Cursor records a JSONL transcript at
+# ~/.cursor/projects/<slug>/agent-transcripts/<uuid>/<uuid>.jsonl, where <slug> is
+# the abs cwd with non-alnum -> '-' and NO leading dash (claude keeps the leading
+# dash; cursor drops it). Must match packs/cursor/pack.sh _cursor_proj_slug.
+cat > "$FLEET_HOME/projects/xc.env" <<EOF
+CODE_REPO="$CODE"
+HUB="$HUB"
+WT_HOME="$WT"
+AGENTS="cursor"
+EOF
+
+mk_cursor_transcript() {  # <dir> <uuid>
+  local slug d
+  slug="$(printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g; s/^-*//')"
+  d="$HOME/.cursor/projects/$slug/agent-transcripts/$2"
+  mkdir -p "$d"
+  # role-tagged turns, no top-level type; human turns wrapped in
+  # <timestamp>/<user_query>; a headless auto-continue nudge as a user turn (must
+  # be filtered); a {type:turn_ended} control line (must be ignored).
+  cat > "$d/$2.jsonl" <<'JSONL'
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Mon, Jul 21, 2026</timestamp>\n<user_query>You are a code WORKER. do the thing</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"okay"},{"type":"tool_use","name":"Shell","input":{}},{"type":"tool_use","name":"Read","input":{}}]}}
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Mon, Jul 21, 2026</timestamp>\n<user_query>no, do it differently</user_query>"}]}}
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>Briefly inform the user about the task result and perform any follow-up actions</user_query>"}]}}
+{"type":"turn_ended","status":"completed"}
+JSONL
+}
+mk_cursor_transcript "$HUB" 11111111-1111-1111-1111-111111111111
+mk_cursor_transcript "$WT/feat-x" 22222222-2222-2222-2222-222222222222
+
+echo "[5c] parser extracts the signal from a cursor transcript (unwrap + nudge filtered)"
+cslug="$(printf '%s' "$HUB" | sed 's/[^A-Za-z0-9]/-/g; s/^-*//')"
+ctr="$HOME/.cursor/projects/$cslug/agent-transcripts/11111111-1111-1111-1111-111111111111/11111111-1111-1111-1111-111111111111.jsonl"
+cpjson="$(python3 "$REPO/bin/fleet_chat_parse.py" "$ctr" 2>/dev/null)"
+python3 - "$cpjson" <<'PY'
+import json, sys
+r = json.loads(sys.argv[1])
+c = r["counts"]
+checks = [("real user prompts (nudge excluded)", c["user_prompts"], 2),
+          ("assistant turns", c["assistant_turns"], 1),
+          ("tool_use counted", c["tool_use"], 2),
+          ("tool errors always 0 (no tool_result in cursor)", c["tool_errors"], 0),
+          ("Shell in histogram", r["tools"].get("Shell"), 1),
+          ("session id from filename", r["session_id"], "11111111-1111-1111-1111-111111111111"),
+          ("started None (cursor has no per-turn ts)", r["started"], None),
+          ("first prompt unwrapped", r["user_prompts"][0], "You are a code WORKER. do the thing"),
+          ("correction unwrapped", r["user_prompts"][1], "no, do it differently")]
+fails = 0
+for name, got, want in checks:
+    if got == want: print("  ok   %s (%r)" % (name, got))
+    else: print("  FAIL %s: expected %r, got %r" % (name, want, got)); fails += 1
+sys.exit(1 if fails else 0)
+PY
+[ $? -eq 0 ] && ok "cursor parser checks passed" || bad "cursor parser checks failed"
+
+echo "[5d] --history --parse discovers cursor transcripts via pack_chat_history"
+chjson="$("$REPO/bin/fleet" --project xc chats --scan --history --parse --json 2>/dev/null)"
+python3 - "$chjson" <<'PY'
+import json, sys
+r = json.loads(sys.argv[1])
+convs = r["projects"][0]["conversations"]
+coord = [c for c in convs if c["role"] == "coordinator"]
+worker = [c for c in convs if c["role"] == "worker"]
+checks = [("all pack==cursor", all(c["pack"] == "cursor" for c in convs), True),
+          ("all is_file", all(c["is_file"] for c in convs), True),
+          ("one coordinator entry", len(coord), 1),
+          ("one worker entry", len(worker), 1),
+          ("worker worktree name", worker and worker[0]["worktree"], "feat-x"),
+          ("cursor entries got parsed", all("parsed" in c for c in convs), True),
+          ("parsed found 2 prompts", all(c["parsed"]["counts"]["user_prompts"] == 2 for c in convs), True)]
+fails = 0
+for name, got, want in checks:
+    if got == want: print("  ok   %s (%r)" % (name, got))
+    else: print("  FAIL %s: expected %r, got %r" % (name, want, got)); fails += 1
+sys.exit(1 if fails else 0)
+PY
+[ $? -eq 0 ] && ok "cursor history/parse checks passed" || bad "cursor history/parse checks failed"
+
 echo "[6] seen ledger dedups by normalized fingerprint"
 LEDGER="$TMP/ledger.json"
 fb() { "$REPO/bin/fleet" feedback --file "$LEDGER" "$@"; }

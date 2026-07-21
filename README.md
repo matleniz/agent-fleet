@@ -258,7 +258,7 @@ agent-fleet/
 │   ├── fleet-status.py       the whole tree as JSON/text (fleet status), for a UI
 │   ├── fleet-context.py      front-loaded context per role as JSON/text (fleet context)
 │   ├── fleet-chats-scan.py   fleet-wide conversation inventory (fleet chats --scan), feedback input
-│   ├── fleet_chat_parse.py   claude JSONL transcript → method signal (imported by the scanner)
+│   ├── fleet_chat_parse.py   claude/cursor JSONL transcript → method signal (imported by the scanner)
 │   ├── fleet-feedback.py     the conversation-feedback seen ledger (fleet feedback)
 │   ├── fleet_common.py       shared .env parser + barrier-file set (imported by the .py tools)
 │   └── fleet-assess          score hub maturity → recommend a posture

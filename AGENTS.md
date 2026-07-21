@@ -26,8 +26,8 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
   can't scope MCP per project omit it), and optional `pack_chat_history <hub>
   <wt_home> <since>` (enumerate every recorded transcript for a project over a
   window, finished/deleted workers included — the conversation-feedback retro's
-  stage-A input; claude-first, packs without it fall back to the per-location
-  `fleet chats --scan`). `pack_launch_headless <prompt>` is the non-interactive
+  stage-A input; claude and cursor today, packs without it fall back to the
+  per-location `fleet chats --scan`). `pack_launch_headless <prompt>` is the non-interactive
   launch behind `fleet dispatch` (same barrier + bypass posture as
   `pack_launch`). The core never names a CLI; projects enable packs via
   `AGENTS="..."` in their .env. `packs/hub-mount-ns.sh` is a shared helper
