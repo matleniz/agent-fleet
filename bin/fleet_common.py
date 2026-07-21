@@ -8,14 +8,15 @@ barrier-file set, which is now DERIVED from the packs (each pack's
 pack_barrier_files) rather than hardcoded — so a new pack's barrier file is
 picked up automatically, matching bin/fleet's dynamic barrier_ignore_regex.
 """
+
 import os
 import re
 import subprocess
 import sys
 
 # --- .env parsing -----------------------------------------------------------
-_ASSIGN = re.compile(r'^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$')
-_VAR = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)')
+_ASSIGN = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
 
 
 def _expand(value, scope):
@@ -99,10 +100,16 @@ def barrier_files(pdir=None):
             continue
         try:
             r = subprocess.run(
-                ["bash", "-c",
-                 '. "$0" >/dev/null 2>&1 && declare -F pack_barrier_files '
-                 '>/dev/null && pack_barrier_files', pack],
-                capture_output=True, text=True, timeout=10,
+                [
+                    "bash",
+                    "-c",
+                    '. "$0" >/dev/null 2>&1 && declare -F pack_barrier_files '
+                    ">/dev/null && pack_barrier_files",
+                    pack,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
         except (OSError, subprocess.SubprocessError):
             continue

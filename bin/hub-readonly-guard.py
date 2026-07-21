@@ -10,6 +10,7 @@ acceptEdits writes straight through a deny). This hook is the real barrier.
 Reads the tool-call JSON on stdin; exits 2 (block) if the target path is inside
 the hub, else 0 (allow). The hub path comes from argv[1], else $HUB.
 """
+
 import sys
 import json
 import os
@@ -31,11 +32,15 @@ except Exception:
     sys.exit(2)
 
 ti = data.get("tool_input", {}) or {}
-paths = [ti[k] for k in ("file_path", "path", "notebook_path") if isinstance(ti.get(k), str)]
+paths = [
+    ti[k] for k in ("file_path", "path", "notebook_path") if isinstance(ti.get(k), str)
+]
+
 
 def under_hub(p):
     ap = os.path.realpath(os.path.expanduser(p))
     return ap == HUB or ap.startswith(HUB + os.sep)
+
 
 if any(under_hub(p) for p in paths):
     sys.stderr.write(

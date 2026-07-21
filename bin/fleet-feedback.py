@@ -22,6 +22,7 @@ Subcommands:
 Store: $FLEET_HOME/feedback-seen.json (instance state, never in the repo).
 Override with --file for tests. Reads/writes only that file; touches nothing else.
 """
+
 import argparse
 import datetime
 import hashlib
@@ -84,8 +85,14 @@ def cmd_record(args):
     k = key_for(args.fingerprint)
     e = data["entries"].get(k)
     if e is None:
-        e = {"fingerprint": args.fingerprint, "projects": [],
-             "first_seen": today(), "last_seen": today(), "count": 0, "note": ""}
+        e = {
+            "fingerprint": args.fingerprint,
+            "projects": [],
+            "first_seen": today(),
+            "last_seen": today(),
+            "count": 0,
+            "note": "",
+        }
         data["entries"][k] = e
     e["last_seen"] = today()
     e["count"] += 1
@@ -102,40 +109,61 @@ def cmd_list(args):
     data = load(args.file)
     entries = data["entries"]
     if args.project:
-        entries = {k: e for k, e in entries.items()
-                   if args.project in e.get("projects", [])}
+        entries = {
+            k: e for k, e in entries.items() if args.project in e.get("projects", [])
+        }
     if args.json:
-        print(json.dumps({"version": data.get("version", 1), "entries": entries},
-                         indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {"version": data.get("version", 1), "entries": entries},
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     if not entries:
         print("(ledger empty)")
         return 0
-    for k, e in sorted(entries.items(),
-                       key=lambda kv: kv[1].get("last_seen", ""), reverse=True):
+    for k, e in sorted(
+        entries.items(), key=lambda kv: kv[1].get("last_seen", ""), reverse=True
+    ):
         projs = ",".join(e.get("projects", [])) or "-"
-        print("%s  x%-3d  last=%s  [%s]  %s"
-              % (k, e.get("count", 0), e.get("last_seen", "?"), projs,
-                 e.get("fingerprint", "")[:70]))
+        print(
+            "%s  x%-3d  last=%s  [%s]  %s"
+            % (
+                k,
+                e.get("count", 0),
+                e.get("last_seen", "?"),
+                projs,
+                e.get("fingerprint", "")[:70],
+            )
+        )
     return 0
 
 
 def cmd_prune(args):
     data = load(args.file)
     before = args.before
-    kept = {k: e for k, e in data["entries"].items()
-            if e.get("last_seen", "") >= before}
+    kept = {
+        k: e for k, e in data["entries"].items() if e.get("last_seen", "") >= before
+    }
     dropped = len(data["entries"]) - len(kept)
     data["entries"] = kept
     save(args.file, data)
-    print("pruned %d entr%s last seen before %s"
-          % (dropped, "y" if dropped == 1 else "ies", before))
+    print(
+        "pruned %d entr%s last seen before %s"
+        % (dropped, "y" if dropped == 1 else "ies", before)
+    )
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser(prog="fleet feedback", add_help=True)
-    ap.add_argument("--file", default=DEFAULT_FILE, help="ledger path (default $FLEET_HOME/feedback-seen.json)")
+    ap.add_argument(
+        "--file",
+        default=DEFAULT_FILE,
+        help="ledger path (default $FLEET_HOME/feedback-seen.json)",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("seen", help="exit 0 if the fingerprint is already recorded")

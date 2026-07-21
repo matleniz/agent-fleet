@@ -15,6 +15,7 @@ formats (gemini chats/, antigravity SQLite, ...) get their own parser when their
 transcripts are wired in. detect_format() guards against feeding a non-claude
 pointer in. Reads only; changes nothing.
 """
+
 import json
 import os
 import sys
@@ -26,12 +27,18 @@ _TURN_TYPES = {"user", "assistant"}
 # line: slash-command echoes, local-command stdout, and harness-injected events
 # (background task notifications, system reminders). Excluded so the routine
 # reasons over real human turns and their corrections, not machine chatter.
-_WRAPPER_PREFIXES = ("<command-", "<local-command-", "<bash-", "Caveat:",
-                     "<task-notification", "<system-reminder",
-                     "[SYSTEM NOTIFICATION")
-_PROMPT_MAX = 500      # truncate each captured user prompt
-_ERROR_MAX = 300       # truncate each captured tool-error snippet
-_MAX_ERRORS = 20       # cap error samples per transcript
+_WRAPPER_PREFIXES = (
+    "<command-",
+    "<local-command-",
+    "<bash-",
+    "Caveat:",
+    "<task-notification",
+    "<system-reminder",
+    "[SYSTEM NOTIFICATION",
+)
+_PROMPT_MAX = 500  # truncate each captured user prompt
+_ERROR_MAX = 300  # truncate each captured tool-error snippet
+_MAX_ERRORS = 20  # cap error samples per transcript
 
 
 def detect_format(path):
@@ -64,7 +71,11 @@ def _text_blocks(content):
         if not isinstance(block, dict):
             continue
         if block.get("type") in ("text", "tool_result"):
-            val = block.get("text") if block.get("type") == "text" else block.get("content")
+            val = (
+                block.get("text")
+                if block.get("type") == "text"
+                else block.get("content")
+            )
             if isinstance(val, list):
                 for sub in val:
                     if isinstance(sub, dict) and isinstance(sub.get("text"), str):
@@ -94,8 +105,13 @@ def parse_transcript(path):
 
     session_id = cwd = git_branch = version = None
     started = ended = None
-    counts = {"user_prompts": 0, "assistant_turns": 0,
-              "thinking": 0, "tool_use": 0, "tool_errors": 0}
+    counts = {
+        "user_prompts": 0,
+        "assistant_turns": 0,
+        "thinking": 0,
+        "tool_use": 0,
+        "tool_errors": 0,
+    }
     tools = {}
     user_prompts = []
     tool_errors = []
@@ -144,8 +160,11 @@ def parse_transcript(path):
                     user_prompts.append(content.strip()[:_PROMPT_MAX])
                 elif isinstance(content, list):
                     for block in content:
-                        if isinstance(block, dict) and block.get("type") == "tool_result" \
-                                and block.get("is_error"):
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") == "tool_result"
+                            and block.get("is_error")
+                        ):
                             counts["tool_errors"] += 1
                             if len(tool_errors) < _MAX_ERRORS:
                                 snippet = " ".join(_text_blocks([block])).strip()

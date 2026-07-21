@@ -16,6 +16,7 @@ with --remote, which runs the container's OWN `fleet status --json` over ssh and
 grafts it in (needs the remote engine synced + the project provisioned there).
 Without --remote, remote sessions=None (default keeps `status` fast and local).
 """
+
 import json
 import os
 import shlex
@@ -41,9 +42,7 @@ BARRIER = barrier_files()
 
 def run(args, cwd=None):
     try:
-        out = subprocess.run(
-            args, cwd=cwd, capture_output=True, text=True, timeout=15
-        )
+        out = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=15)
         return out.stdout if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -69,8 +68,9 @@ def remote_sessions(m):
         return None, False
     inner = "fleet --project %s status --json" % proj
     remote = "docker exec %s bash -lc %s" % (container, shlex.quote(inner))
-    out, rc = run_out_rc(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6",
-                          host, remote])
+    out, rc = run_out_rc(
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", host, remote]
+    )
     if rc != 0 or not out.strip():
         return None, False
     try:
@@ -99,29 +99,54 @@ def machine_list(env, defaults):
 def resolve_machine(name, env, proj):
     local_tmux = env.get("LOCAL_TMUX") or "fleet-" + proj
     if name == "local":
-        return {"name": name, "local": True, "host": None, "container": None,
-                "tmux": local_tmux, "engine_dir": None, "project": proj,
-                "resolved": True}
+        return {
+            "name": name,
+            "local": True,
+            "host": None,
+            "container": None,
+            "tmux": local_tmux,
+            "engine_dir": None,
+            "project": proj,
+            "resolved": True,
+        }
     f = os.path.join(MACHINES_DIR, name + ".env")
     if os.path.isfile(f):
         m = parse_env(f)
         host = m.get("MACHINE_HOST", "")
         is_local = host == "local"
-        return {"name": name, "local": is_local, "host": host or None,
-                "container": None if is_local else (m.get("MACHINE_CONTAINER") or "fleet"),
-                "tmux": local_tmux if is_local else (m.get("MACHINE_TMUX") or "fleet"),
-                "engine_dir": None if is_local else (m.get("MACHINE_ENGINE_DIR") or "agent-fleet"),
-                "project": m.get("MACHINE_PROJECT") or proj,
-                "resolved": bool(host)}
+        return {
+            "name": name,
+            "local": is_local,
+            "host": host or None,
+            "container": None if is_local else (m.get("MACHINE_CONTAINER") or "fleet"),
+            "tmux": local_tmux if is_local else (m.get("MACHINE_TMUX") or "fleet"),
+            "engine_dir": None
+            if is_local
+            else (m.get("MACHINE_ENGINE_DIR") or "agent-fleet"),
+            "project": m.get("MACHINE_PROJECT") or proj,
+            "resolved": bool(host),
+        }
     if name == "remote" and env.get("REMOTE_HOST"):
-        return {"name": name, "local": False, "host": env["REMOTE_HOST"],
-                "container": env.get("REMOTE_CONTAINER") or "fleet",
-                "tmux": env.get("REMOTE_TMUX") or "fleet",
-                "engine_dir": env.get("REMOTE_ENGINE_DIR") or "agent-fleet",
-                "project": env.get("REMOTE_PROJECT") or proj,
-                "resolved": True}
-    return {"name": name, "local": False, "resolved": False, "host": None,
-            "container": None, "tmux": None, "engine_dir": None, "project": proj}
+        return {
+            "name": name,
+            "local": False,
+            "host": env["REMOTE_HOST"],
+            "container": env.get("REMOTE_CONTAINER") or "fleet",
+            "tmux": env.get("REMOTE_TMUX") or "fleet",
+            "engine_dir": env.get("REMOTE_ENGINE_DIR") or "agent-fleet",
+            "project": env.get("REMOTE_PROJECT") or proj,
+            "resolved": True,
+        }
+    return {
+        "name": name,
+        "local": False,
+        "resolved": False,
+        "host": None,
+        "container": None,
+        "tmux": None,
+        "engine_dir": None,
+        "project": proj,
+    }
 
 
 def worktrees(code_repo, wt_home):
@@ -129,11 +154,11 @@ def worktrees(code_repo, wt_home):
     trees, cur = [], {}
     for line in out.splitlines() + [""]:
         if line.startswith("worktree "):
-            cur = {"path": line[len("worktree "):]}
+            cur = {"path": line[len("worktree ") :]}
         elif line.startswith("HEAD "):
-            cur["sha"] = line[len("HEAD "):][:7]
+            cur["sha"] = line[len("HEAD ") :][:7]
         elif line.startswith("branch "):
-            cur["branch"] = line[len("branch "):].replace("refs/heads/", "")
+            cur["branch"] = line[len("branch ") :].replace("refs/heads/", "")
         elif line == "detached":
             cur["branch"] = "(detached)"
         elif line == "" and cur:
@@ -165,8 +190,7 @@ def commits_ahead(path, base):
 
 
 def tmux_windows(session):
-    out = run(["tmux", "list-windows", "-t", session,
-               "-F", "#{window_name}"])
+    out = run(["tmux", "list-windows", "-t", session, "-F", "#{window_name}"])
     return set(w for w in out.splitlines() if w)
 
 
@@ -203,26 +227,33 @@ def local_sessions(env, proj, tmux):
     workers = []
     if code_repo and wt_home:
         for t in worktrees(code_repo, wt_home):
-            name = t["path"][len(wt_home.rstrip("/")) + 1:]
+            name = t["path"][len(wt_home.rstrip("/")) + 1 :]
             meta = metas.get(name, {})
-            mode = meta.get("mode") or ("dispatch" if name in statuses else "interactive")
-            workers.append({
-                "name": name,
-                "branch": t.get("branch", "?"),
-                "sha": t.get("sha", ""),
-                "uncommitted": uncommitted(t["path"]),
-                "commits_ahead": commits_ahead(t["path"], base),
-                "present": name in windows,
-                "mode": mode,
-                "parent": meta.get("parent") or None,
-                "dispatch_status": statuses.get(name),
-                "created": meta.get("created") or None,
-            })
+            mode = meta.get("mode") or (
+                "dispatch" if name in statuses else "interactive"
+            )
+            workers.append(
+                {
+                    "name": name,
+                    "branch": t.get("branch", "?"),
+                    "sha": t.get("sha", ""),
+                    "uncommitted": uncommitted(t["path"]),
+                    "commits_ahead": commits_ahead(t["path"], base),
+                    "present": name in windows,
+                    "mode": mode,
+                    "parent": meta.get("parent") or None,
+                    "dispatch_status": statuses.get(name),
+                    "created": meta.get("created") or None,
+                }
+            )
 
     coordinator = None
     if "hub" in windows or env.get("HUB"):
-        coordinator = {"window": "hub", "present": "hub" in windows,
-                       "hub": env.get("HUB") or None}
+        coordinator = {
+            "window": "hub",
+            "present": "hub" in windows,
+            "hub": env.get("HUB") or None,
+        }
     return {"coordinator": coordinator, "workers": workers}
 
 
@@ -266,7 +297,9 @@ def render_text(tree):
             s = m.get("sessions")
             if s is None:
                 if "reachable" in m and not m["reachable"]:
-                    lines.append("  │    sessions: unreachable / no status (sync the engine there)")
+                    lines.append(
+                        "  │    sessions: unreachable / no status (sync the engine there)"
+                    )
                 elif "reachable" in m:
                     lines.append("  │    sessions: none")
                 else:
@@ -274,8 +307,10 @@ def render_text(tree):
                 continue
             c = s["coordinator"]
             if c:
-                lines.append("  │    coordinator: hub %s" %
-                             ("[live]" if c["present"] else "[not running]"))
+                lines.append(
+                    "  │    coordinator: hub %s"
+                    % ("[live]" if c["present"] else "[not running]")
+                )
             deps = [w for w in s["workers"] if w["parent"]]
             indep = [w for w in s["workers"] if not w["parent"]]
             for group, label in ((deps, "dispatched"), (indep, "independent")):
@@ -285,12 +320,24 @@ def render_text(tree):
                     deliver = "" if ca is None else " %dc" % ca
                     dirty = " +uncommitted" if w["uncommitted"] else ""
                     warn = ""
-                    if (w["dispatch_status"] or "").startswith("done rc=0") \
-                            and ca == 0 and not w["uncommitted"]:
+                    if (
+                        (w["dispatch_status"] or "").startswith("done rc=0")
+                        and ca == 0
+                        and not w["uncommitted"]
+                    ):
                         warn = "  [empty: finished, no commits]"
-                    lines.append("  │      %-14s %-11s %s (%s)%s%s%s" % (
-                        w["name"], "[" + label + "]", w["branch"], st,
-                        deliver, dirty, warn))
+                    lines.append(
+                        "  │      %-14s %-11s %s (%s)%s%s%s"
+                        % (
+                            w["name"],
+                            "[" + label + "]",
+                            w["branch"],
+                            st,
+                            deliver,
+                            dirty,
+                            warn,
+                        )
+                    )
     return "\n".join(lines) if lines else "(no projects)"
 
 
@@ -319,8 +366,10 @@ def main():
         elif os.environ.get("FLEET_CONF"):
             conf = os.environ["FLEET_CONF"]
         if not conf or not os.path.isfile(conf):
-            sys.stderr.write("error: no project resolved (run inside a project, "
-                             "pass --project, or --all)\n")
+            sys.stderr.write(
+                "error: no project resolved (run inside a project, "
+                "pass --project, or --all)\n"
+            )
             sys.exit(2)
         confs.append(conf)
 

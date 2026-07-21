@@ -19,6 +19,7 @@ Token counts are a rough estimate (bytes / 4); use the CLI's own `/cost` for the
 real bill. Resolution mirrors fleet-config.sh: --project, else $FLEET_CONF (which
 bin/fleet exports before dispatching the subcommand), else error.
 """
+
 import json
 import os
 import re
@@ -41,11 +42,13 @@ def tok(nbytes):
 
 def home_short(path):
     home = os.path.expanduser("~")
-    return "~" + path[len(home):] if path.startswith(home) else path
+    return "~" + path[len(home) :] if path.startswith(home) else path
 
 
 def global_file():
-    return os.environ.get("FLEET_GLOBAL_AGENTS") or os.path.expanduser("~/.agents/AGENTS.md")
+    return os.environ.get("FLEET_GLOBAL_AGENTS") or os.path.expanduser(
+        "~/.agents/AGENTS.md"
+    )
 
 
 def file_entry(path, label):
@@ -54,7 +57,12 @@ def file_entry(path, label):
         nbytes = os.path.getsize(path)
     except OSError:
         return None
-    return {"path": home_short(path), "label": label, "bytes": nbytes, "tokens": tok(nbytes)}
+    return {
+        "path": home_short(path),
+        "label": label,
+        "bytes": nbytes,
+        "tokens": tok(nbytes),
+    }
 
 
 def frontmatter(path):
@@ -70,7 +78,7 @@ def frontmatter(path):
     for line in lines[1:]:
         if line.strip() == "---":
             break
-        m = re.match(r'^([A-Za-z_][\w-]*):\s?(.*)$', line)
+        m = re.match(r"^([A-Za-z_][\w-]*):\s?(.*)$", line)
         if m:
             if key is not None:
                 fm[key] = " ".join(buf).strip()
@@ -123,8 +131,10 @@ def dispatch_preamble(dest, name, hub):
     Keep in sync with cmd_dispatch_run (bin/fleet)."""
     p = "You are a code WORKER in the git worktree %s (branch %s)." % (dest, name)
     if hub:
-        p += (" The docs hub at %s is READ-ONLY: do not edit it; if a hub doc "
-              "needs changing, note it for the coordinator (do not write there)." % hub)
+        p += (
+            " The docs hub at %s is READ-ONLY: do not edit it; if a hub doc "
+            "needs changing, note it for the coordinator (do not write there)." % hub
+        )
     p += " Do the task, run the tests, commit on this branch. Task follows."
     return p
 
@@ -135,14 +145,22 @@ def role_report(label, base_dir, files, skill_dirs):
     entries = [e for e in files if e is not None]
     front, body, names = scan_skills(skill_dirs)
     if names:
-        entries.append({
-            "path": "(skill frontmatter)", "label": "skills ×%d (descriptions)" % len(names),
-            "bytes": front, "tokens": tok(front), "names": names,
-        })
+        entries.append(
+            {
+                "path": "(skill frontmatter)",
+                "label": "skills ×%d (descriptions)" % len(names),
+                "bytes": front,
+                "tokens": tok(front),
+                "names": names,
+            }
+        )
     sub_b = sum(e["bytes"] for e in entries)
     return {
-        "role": label, "dir": home_short(base_dir) if base_dir else None,
-        "files": entries, "subtotal_bytes": sub_b, "subtotal_tokens": tok(sub_b),
+        "role": label,
+        "dir": home_short(base_dir) if base_dir else None,
+        "files": entries,
+        "subtotal_bytes": sub_b,
+        "subtotal_tokens": tok(sub_b),
         "skill_body_bytes": body,
     }
 
@@ -158,8 +176,10 @@ def coordinator_report(env):
         file_entry(os.path.join(hub, "AGENTS.md"), "hub instructions"),
     ]
     skill_dirs = [
-        os.path.join(hub, ".agents/skills"), os.path.join(hub, ".claude/skills"),
-        os.path.join(home, ".agents/skills"), os.path.join(home, ".claude/skills"),
+        os.path.join(hub, ".agents/skills"),
+        os.path.join(hub, ".claude/skills"),
+        os.path.join(home, ".agents/skills"),
+        os.path.join(home, ".claude/skills"),
     ]
     return role_report("coordinator", hub, files, skill_dirs)
 
@@ -175,8 +195,10 @@ def worker_report(env):
         file_entry(os.path.join(code, "CLAUDE.md"), "code bridge"),
     ]
     skill_dirs = [
-        os.path.join(code, ".agents/skills"), os.path.join(code, ".claude/skills"),
-        os.path.join(home, ".agents/skills"), os.path.join(home, ".claude/skills"),
+        os.path.join(code, ".agents/skills"),
+        os.path.join(code, ".claude/skills"),
+        os.path.join(home, ".agents/skills"),
+        os.path.join(home, ".claude/skills"),
     ]
     rep = role_report("worker", code, files, skill_dirs)
     # Dispatched (headless) workers also get the fleet preamble prepended.
@@ -184,8 +206,14 @@ def worker_report(env):
     dest = os.path.join(wt, "<name>") if wt else "<worktree>"
     pre = dispatch_preamble(dest, "<name>", env.get("HUB", ""))
     pb = len(pre.encode("utf-8"))
-    rep["files"].append({"path": "(generated)", "label": "dispatch preamble (headless only)",
-                         "bytes": pb, "tokens": tok(pb)})
+    rep["files"].append(
+        {
+            "path": "(generated)",
+            "label": "dispatch preamble (headless only)",
+            "bytes": pb,
+            "tokens": tok(pb),
+        }
+    )
     rep["subtotal_bytes"] += pb
     rep["subtotal_tokens"] = tok(rep["subtotal_bytes"])
     return rep
@@ -207,8 +235,15 @@ def on_demand(env):
     rep = coordinator_report(env) or worker_report(env)
     if rep and rep.get("skill_body_bytes"):
         b = rep["skill_body_bytes"]
-        items.append({"path": "(skill bodies)", "label": "skill bodies",
-                      "bytes": b, "tokens": tok(b), "note": "loaded only on invocation"})
+        items.append(
+            {
+                "path": "(skill bodies)",
+                "label": "skill bodies",
+                "bytes": b,
+                "tokens": tok(b),
+                "note": "loaded only on invocation",
+            }
+        )
     return items
 
 
@@ -218,16 +253,20 @@ def render_role(rep):
     out.append("  %-42s %8s %7s" % ("file", "bytes", "~tok"))
     for e in rep["files"]:
         out.append("  %-42s %8d %7d" % (e["label"][:42], e["bytes"], e["tokens"]))
-        if e.get("names"):   # list skill names on a continuation line (untruncated)
+        if e.get("names"):  # list skill names on a continuation line (untruncated)
             out.append("      %s" % ", ".join(e["names"]))
     out.append("  " + "-" * 59)
-    out.append("  %-42s %8d %7d" % ("subtotal", rep["subtotal_bytes"], rep["subtotal_tokens"]))
+    out.append(
+        "  %-42s %8d %7d" % ("subtotal", rep["subtotal_bytes"], rep["subtotal_tokens"])
+    )
     return "\n".join(out)
 
 
 def render_text(report):
     out = ["fleet context — front-loaded per role for project '%s'" % report["project"]]
-    out.append("(auto-read at launch; ~tokens ≈ bytes/4, rough — use the CLI's /cost for real)")
+    out.append(
+        "(auto-read at launch; ~tokens ≈ bytes/4, rough — use the CLI's /cost for real)"
+    )
     out.append("")
     for role in ("coordinator", "worker"):
         rep = report["roles"].get(role)
@@ -239,7 +278,9 @@ def render_text(report):
         for e in report["on_demand"]:
             note = ("  " + e["note"]) if e.get("note") else ""
             out.append("  %-42s %8d b%s" % (e["label"][:42], e["bytes"], note))
-        out.append("  docs/ and hub content            navigated on demand, never auto-loaded")
+        out.append(
+            "  docs/ and hub content            navigated on demand, never auto-loaded"
+        )
         out.append("")
     for n in report["notes"]:
         out.append("note: " + n)
@@ -272,7 +313,9 @@ def main():
     elif os.environ.get("FLEET_CONF"):
         conf = os.environ["FLEET_CONF"]
     if not conf or not os.path.isfile(conf):
-        sys.stderr.write("error: no project resolved (run inside a project or pass --project)\n")
+        sys.stderr.write(
+            "error: no project resolved (run inside a project or pass --project)\n"
+        )
         sys.exit(2)
 
     name = os.path.basename(conf)[:-4]
@@ -305,11 +348,16 @@ def main():
         print(render_text(report))
 
     if budget is not None:
-        over = [(r, rep["subtotal_tokens"]) for r, rep in roles.items()
-                if rep["subtotal_tokens"] > budget]
+        over = [
+            (r, rep["subtotal_tokens"])
+            for r, rep in roles.items()
+            if rep["subtotal_tokens"] > budget
+        ]
         if over:
             for r, t in over:
-                sys.stderr.write("over budget: %s front-load ~%d tok > %d\n" % (r, t, budget))
+                sys.stderr.write(
+                    "over budget: %s front-load ~%d tok > %d\n" % (r, t, budget)
+                )
             sys.exit(2)
 
 

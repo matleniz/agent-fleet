@@ -27,6 +27,7 @@ copilot/gemini return a path (file or dir), opencode returns a shell command, an
 antigravity returns a conversation id. Each entry carries is_file so a consumer
 knows whether it can open the pointer directly (only claude's is parsed today).
 """
+
 import datetime
 import json
 import os
@@ -58,12 +59,12 @@ def worktrees(code_repo, wt_home):
     paths, cur = [], None
     for line in out.splitlines() + [""]:
         if line.startswith("worktree "):
-            cur = line[len("worktree "):]
+            cur = line[len("worktree ") :]
         elif line == "" and cur:
             paths.append(cur)
             cur = None
     wt = wt_home.rstrip("/")
-    return [(p[len(wt) + 1:], p) for p in paths if p.startswith(wt + "/")]
+    return [(p[len(wt) + 1 :], p) for p in paths if p.startswith(wt + "/")]
 
 
 def chat_pointer(pack_sh, directory):
@@ -71,10 +72,17 @@ def chat_pointer(pack_sh, directory):
     pack.sh and calling pack_chat_pointer — same standalone-source pattern as
     fleet_common.barrier_files and bin/fleet's `fleet chats`. Empty -> None."""
     r = subprocess.run(
-        ["bash", "-c",
-         '. "$0" >/dev/null 2>&1 && declare -F pack_chat_pointer >/dev/null '
-         '&& pack_chat_pointer "$1"', pack_sh, directory],
-        capture_output=True, text=True, timeout=20,
+        [
+            "bash",
+            "-c",
+            '. "$0" >/dev/null 2>&1 && declare -F pack_chat_pointer >/dev/null '
+            '&& pack_chat_pointer "$1"',
+            pack_sh,
+            directory,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
     )
     out = r.stdout.strip()
     return out or None
@@ -97,8 +105,15 @@ def entry_for(role, worktree, directory, pack, pdir):
             mtime = os.path.getmtime(pointer)
         except OSError:
             mtime = None
-    return {"role": role, "worktree": worktree, "dir": directory, "pack": pack,
-            "pointer": pointer, "is_file": is_file, "mtime": mtime}
+    return {
+        "role": role,
+        "worktree": worktree,
+        "dir": directory,
+        "pack": pack,
+        "pointer": pointer,
+        "is_file": is_file,
+        "mtime": mtime,
+    }
 
 
 def history_entries(pack, pdir, hub, wt_home, since):
@@ -113,15 +128,23 @@ def history_entries(pack, pdir, hub, wt_home, since):
     since_arg = "" if since is None else ("%d" % int(since))
     try:
         r = subprocess.run(
-            ["bash", "-c",
-             '. "$0" >/dev/null 2>&1 && { declare -F pack_chat_history >/dev/null '
-             '|| exit 3; } && pack_chat_history "$1" "$2" "$3"',
-             pack_sh, hub or "", wt_home or "", since_arg],
-            capture_output=True, text=True, timeout=30,
+            [
+                "bash",
+                "-c",
+                '. "$0" >/dev/null 2>&1 && { declare -F pack_chat_history >/dev/null '
+                '|| exit 3; } && pack_chat_history "$1" "$2" "$3"',
+                pack_sh,
+                hub or "",
+                wt_home or "",
+                since_arg,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    if r.returncode == 3:       # pack has no history support
+    if r.returncode == 3:  # pack has no history support
         return None
     ents = []
     for line in r.stdout.splitlines():
@@ -133,9 +156,17 @@ def history_entries(pack, pdir, hub, wt_home, since):
             mtime = float(mt)
         except ValueError:
             mtime = None
-        ents.append({"role": role, "worktree": (None if wt == "-" else wt),
-                     "dir": cwd, "pack": pack, "pointer": path,
-                     "is_file": os.path.isfile(path), "mtime": mtime})
+        ents.append(
+            {
+                "role": role,
+                "worktree": (None if wt == "-" else wt),
+                "dir": cwd,
+                "pack": pack,
+                "pointer": path,
+                "is_file": os.path.isfile(path),
+                "mtime": mtime,
+            }
+        )
     return ents
 
 
@@ -190,19 +221,29 @@ def project_conversations(env, pdir, parse=False, since=None, history=False):
         for c in convs:
             if c["pack"] == "claude" and c["is_file"]:
                 c["parsed"] = parse_transcript(c["pointer"])
-    convs.sort(key=lambda c: (c["mtime"] or 0), reverse=True)
-    return {"name": None, "hub": hub or None, "wt_home": wt_home or None,
-            "agents": agents, "conversations": convs}
+    convs.sort(key=lambda c: c["mtime"] or 0, reverse=True)
+    return {
+        "name": None,
+        "hub": hub or None,
+        "wt_home": wt_home or None,
+        "agents": agents,
+        "conversations": convs,
+    }
 
 
 def render_text(tree):
     lines = []
     for p in tree["projects"]:
         n = len(p["conversations"])
-        lines.append("● %s  (%d recorded conversation%s)"
-                     % (p["name"], n, "" if n == 1 else "s"))
+        lines.append(
+            "● %s  (%d recorded conversation%s)" % (p["name"], n, "" if n == 1 else "s")
+        )
         for c in p["conversations"]:
-            who = "coordinator" if c["role"] == "coordinator" else ("worker " + (c["worktree"] or "?"))
+            who = (
+                "coordinator"
+                if c["role"] == "coordinator"
+                else ("worker " + (c["worktree"] or "?"))
+            )
             kind = "" if c["is_file"] else "  [not a file: read via the pack]"
             lines.append("  %-11s %-22s %s%s" % (c["pack"], who, c["pointer"], kind))
     return "\n".join(lines) if lines else "(no recorded conversations found)"
@@ -224,8 +265,10 @@ def main():
         raw = args[i + 1] if i + 1 < len(args) else None
         since = since_epoch(raw)
         if since is None:
-            sys.stderr.write("error: --since expects an ISO date/datetime "
-                             "(e.g. 2026-07-01 or 2026-07-01T12:00:00)\n")
+            sys.stderr.write(
+                "error: --since expects an ISO date/datetime "
+                "(e.g. 2026-07-01 or 2026-07-01T12:00:00)\n"
+            )
             sys.exit(2)
 
     confs = []
@@ -241,8 +284,10 @@ def main():
         elif os.environ.get("FLEET_CONF"):
             conf = os.environ["FLEET_CONF"]
         if not conf or not os.path.isfile(conf):
-            sys.stderr.write("error: no project resolved (run inside a project, "
-                             "pass --project, or --all)\n")
+            sys.stderr.write(
+                "error: no project resolved (run inside a project, "
+                "pass --project, or --all)\n"
+            )
             sys.exit(2)
         confs.append(conf)
 
@@ -250,8 +295,9 @@ def main():
     projects = []
     for conf in confs:
         name = os.path.basename(conf)[:-4]
-        p = project_conversations(parse_env(conf), pdir, parse=parse, since=since,
-                                  history=history)
+        p = project_conversations(
+            parse_env(conf), pdir, parse=parse, since=since, history=history
+        )
         p["name"] = name
         projects.append(p)
     tree = {"machine": "local", "projects": projects}

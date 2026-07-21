@@ -16,12 +16,14 @@ Usage:
   fleet-assess --hub PATH [--code PATH]
   fleet-assess [--project NAME]     # resolves the project (--project / cwd; no default)
 """
+
 import argparse
 import os
 import sys
 import subprocess
 
 SELF_DIR = os.path.dirname(os.path.realpath(__file__))
+
 
 def load_conf(project=None, quiet=False):
     """Resolve + read the project config through bin/fleet-queue, so the shell
@@ -40,11 +42,16 @@ def load_conf(project=None, quiet=False):
         return None
     return dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
 
+
 def walk_md(root):
     """Return (n_files, total_bytes) of markdown docs under root, skipping git/screenshots."""
     n, b = 0, 0
     for dirpath, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "SCREENSHOTS", ".claude", ".agents")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in (".git", "node_modules", "SCREENSHOTS", ".claude", ".agents")
+        ]
         for f in files:
             if f.lower().endswith((".md", ".mermaid", ".mmd")):
                 n += 1
@@ -54,11 +61,25 @@ def walk_md(root):
                     pass
     return n, b
 
+
 def code_bytes(root):
     exts = (".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb", ".sql")
     b = 0
     for dirpath, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in (".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d
+            not in (
+                ".git",
+                "node_modules",
+                ".venv",
+                "venv",
+                "dist",
+                "build",
+                "__pycache__",
+            )
+        ]
         for f in files:
             if f.endswith(exts):
                 try:
@@ -67,13 +88,19 @@ def code_bytes(root):
                     pass
     return b
 
+
 def git_commits(root):
     try:
-        out = subprocess.run(["git", "-C", root, "rev-list", "--count", "HEAD"],
-                             capture_output=True, text=True, timeout=10)
+        out = subprocess.run(
+            ["git", "-C", root, "rev-list", "--count", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
         return int(out.stdout.strip() or 0)
     except Exception:
         return 0
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -85,7 +112,7 @@ def main():
     if conf is None:
         if not (args.hub or args.code):
             sys.exit(2)  # fleet-queue's stderr already explained and listed projects
-        conf = {}       # explicit --hub/--code: no resolved project needed
+        conf = {}  # explicit --hub/--code: no resolved project needed
     hub = args.hub or conf.get("HUB")
     code = args.code or conf.get("CODE_REPO")
     if not hub or not os.path.isdir(hub):
@@ -103,11 +130,16 @@ def main():
         print("  grow the hub as you go. The fleet is a scale-up, not a prerequisite.")
         return
 
-    has_index = any(os.path.isfile(os.path.join(hub, n)) for n in ("INDEX.md", "index.md"))
+    has_index = any(
+        os.path.isfile(os.path.join(hub, n)) for n in ("INDEX.md", "index.md")
+    )
     # Skills live in .agents/skills (the cross-CLI standard); .claude/skills is
     # kept for Claude Code (often a symlink to the former) — count the union.
     skill_names = set()
-    for sd in (os.path.join(hub, ".agents", "skills"), os.path.join(hub, ".claude", "skills")):
+    for sd in (
+        os.path.join(hub, ".agents", "skills"),
+        os.path.join(hub, ".claude", "skills"),
+    ):
         if os.path.isdir(sd):
             skill_names.update(os.listdir(sd))
     n_skills = len(skill_names)
@@ -122,7 +154,7 @@ def main():
     score = 0
     score += 1 if has_index else 0
     score += 1 if n_md >= 8 else 0
-    score += 1 if hub_bytes >= 40_000 else 0          # ~40 KB of distilled doc
+    score += 1 if hub_bytes >= 40_000 else 0  # ~40 KB of distilled doc
     score += 1 if (cov is not None and cov >= 0.02) else 0  # doc >= 2% of code size
     score += 1 if n_skills >= 3 else 0
     score += 1 if commits >= 20 else 0
@@ -169,16 +201,17 @@ def main():
     print(f"hub            : {hub}")
     print(f"index router   : {'yes' if has_index else 'NO (add INDEX.md first)'}")
     print(f"doc files      : {n_md}")
-    print(f"distilled size : {hub_bytes/1000:.0f} KB")
+    print(f"distilled size : {hub_bytes / 1000:.0f} KB")
     print(f"skills in hub  : {n_skills}")
     print(f"hub commits    : {commits}")
     if cov is not None:
-        print(f"doc/code ratio : {cov*100:.1f}% (coverage proxy)")
+        print(f"doc/code ratio : {cov * 100:.1f}% (coverage proxy)")
     print(f"maturity score : {score}/6")
     print(f"\n>>> REGIME: {regime}\n")
     for line in postures[regime]:
         print("  " + line)
     print("\n(Model: docs/05-adaptive-posture.md. Re-run as the hub grows.)")
+
 
 if __name__ == "__main__":
     main()
