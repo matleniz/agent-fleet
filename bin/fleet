@@ -384,6 +384,25 @@ in_target_window() {  # <win>
   [ "$(tmux display-message -p '#{window_name}' 2>/dev/null)" = "$1" ]
 }
 
+# Interactive attach (local tmux switch-client/attach, remote ssh -t + docker
+# exec -it) needs a controlling terminal. An agent's Bash tool has no tty (nor
+# does a piped or redirected invocation), so tmux aborts with the cryptic
+# "open terminal failed: not a terminal" and ssh with "Pseudo-terminal will not
+# be allocated". Fail early with an actionable message instead. `fleet dispatch`
+# is the headless path and never routes through here, so it stays unaffected.
+tty_or_die() {
+  [ -t 0 ] && return 0
+  cat >&2 <<'EOF'
+error: this is an interactive session command (it attaches a tmux terminal), but
+  the current shell has no tty. An agent's Bash tool has none, and so does a
+  piped or redirected invocation, so tmux would fail with "open terminal failed:
+  not a terminal".
+  - Headless / agent context: use  fleet dispatch <name> "<task>"  instead.
+  - Interactive use: run this from your own terminal.
+EOF
+  return 1
+}
+
 # Emit a shell script that hands THIS terminal a private, grouped "view" of the
 # machine session <sess>, focused on <win> (empty = whole session, any window).
 # Why a view and not a direct attach: tmux shares one active window across every
@@ -470,6 +489,12 @@ session_window() {  # <win> <fleet args...>
     # attach below, which can block for as long as the operator stays
     # attached — the lock must never live that long.
     fleet_guard_unlock
+    # No tty check here on purpose: this local branch must create/relaunch the
+    # window as a side effect BEFORE the attach (test/relaunch.sh drives it in a
+    # no-tty harness and depends on that). With no tty the final view attach
+    # still fails as tmux "open terminal failed"; the clean-message guard covers
+    # the interactive-only entry points (session_attach, and the remote branch
+    # below) where nothing is created first.
     local snip; snip="$(view_snippet "$M_TMUX" "$win")"
     exec bash -c "$snip"
   else
@@ -484,6 +509,10 @@ session_window() {  # <win> <fleet args...>
     # dispatch` (cmd_dispatch) closes it fully there because it recurses into
     # the remote box's own `fleet` process, which takes ITS OWN lock.
     fleet_guard_unlock
+    # ensure+view both run remotely inside this one ssh -t; with no local tty,
+    # ssh can't allocate a PTY and remote tmux dies "open terminal failed: not a
+    # terminal". Fail here with the actionable message (nothing created yet).
+    tty_or_die || exit 2
     exec ssh -t "$M_HOST" "docker exec -it $M_CONTAINER bash -lc 'echo $b64e | base64 -d | bash; echo $b64v | base64 -d | bash'"
   fi
 }
@@ -491,6 +520,7 @@ session_window() {  # <win> <fleet args...>
 # Attach the target machine's whole tmux session (all its windows), through a
 # private view so two attaches never drag each other's active window.
 session_attach() {
+  tty_or_die || exit 2
   if [ "$M_LOCAL" = 1 ]; then
     command -v tmux >/dev/null || { echo "error: tmux not installed" >&2; exit 2; }
     tmux has-session -t "$M_TMUX" 2>/dev/null \
