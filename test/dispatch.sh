@@ -60,6 +60,14 @@ for c in "${CASES[@]}"; do
     case "$got" in *"$n"*) ;; *) fail "$pack: headless cmd missing '$n' (got: $got)";; esac
   done
   case "$got" in *"TASK_$pack here"*) ;; *) fail "$pack: task not passed (got: $got)";; esac
+  # MAT-14: agy's `-p` takes the next argv as the prompt (unlike cursor's boolean
+  # `-p`). Assert adjacency so `--dangerously-skip-permissions` cannot be eaten.
+  if [ "$pack" = antigravity ]; then
+    case "$got" in
+      *"-p TASK_$pack here"*) ;;
+      *) fail "$pack: expected -p <task> adjacency (got: $got)";;
+    esac
+  fi
   rm -f "$stub/$cli"
   echo "  $pack: OK ($got)"
 done
@@ -180,6 +188,43 @@ FLEET_PACKS_DIR="$packs" FLEET_WAIT_POLL=1 "$ENGINE/bin/fleet" --project sandbox
 rm -rf "$FLEET_HOME/dispatch/sandbox"
 echo "PASS (layer 2): dispatch ran the detached worker (task + preamble) and recorded completion (status + fleet ls + fleet wait)"
 
+# ---------- Layer 2c: failing pack still records done rc=N (MAT-13) ----------
+# Under `set -e`, a bare failing subshell used to abort _dispatch-run before the
+# status write — forever "running", hung `fleet wait`. Stub exits 7.
+cat > "$packs/stub/pack.sh" <<'PACK'
+pack_launch()          { : ; }
+pack_launch_headless() { return 7; }
+pack_has_sessions()    { return 1; }
+pack_worker_setup()    { return 0; }
+pack_barrier_files()   { : ; }
+pack_install()         { echo "(stub)"; }
+pack_doctor()          { echo "stub"; }
+PACK
+FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox -a stub \
+  dispatch failtest "should fail" >/dev/null 2>&1 || true
+fstatus="$FLEET_HOME/dispatch/sandbox/failtest.status"
+for _ in $(seq 1 50); do
+  case "$(cat "$fstatus" 2>/dev/null)" in done\ rc=*) break ;; esac
+  sleep 0.2
+done
+[ "$(cat "$fstatus" 2>/dev/null)" = "done rc=7" ] \
+  || fail "failing dispatch did not record done rc=7 (got: $(cat "$fstatus" 2>/dev/null))"
+rc=0
+FLEET_PACKS_DIR="$packs" FLEET_WAIT_POLL=1 "$ENGINE/bin/fleet" --project sandbox wait failtest >/dev/null 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail "fleet wait should be non-zero for done rc=7"
+rm -rf "$FLEET_HOME/dispatch/sandbox"
+# Restore writing stub for later layers
+cat > "$packs/stub/pack.sh" <<'PACK'
+pack_launch()          { : ; }
+pack_launch_headless() { printf '%s' "$1" > "$PWD/.dispatch-marker"; printf '%s' "${2:-}" > "$PWD/.model-marker"; }
+pack_has_sessions()    { return 1; }
+pack_worker_setup()    { return 0; }
+pack_barrier_files()   { echo ".dispatch-marker"; }
+pack_install()         { echo "(stub)"; }
+pack_doctor()          { if [ "${1:-}" = probe ]; then echo OK > .fleet-witness; echo "write-probe: PASS (stub wrote the witness)"; else echo "stub"; fi; }
+PACK
+echo "PASS (layer 2c): failing pack_launch_headless records done rc=N (set -e safe)"
+
 # ---------- Layer 2b: dispatch --model plumbs the model to the pack ----------
 FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox -a stub \
   dispatch --model my-model mtest "task two" >/dev/null 2>&1 || fail "dispatch --model errored"
@@ -234,6 +279,11 @@ FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox -a stub \
 [ ! -e "$ROOT/wt/bad;name" ] || fail "unsafe-named worktree was created"
 FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox -a stub \
   w 'evil$(touch pwned)' >/dev/null 2>&1 && fail "fleet w accepted an unsafe worker name"
+FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox -a stub \
+  w --help >/dev/null 2>&1 && fail "fleet w accepted leading-dash name --help"
+# add-agent available list must be pack dirs only (not packs/hub-mount-ns.sh).
+add_out="$("$ENGINE/bin/fleet" --project sandbox add-agent nosuch 2>&1)" || true
+case "$add_out" in *hub-mount-ns*) fail "add-agent available list includes hub-mount-ns.sh (not a pack)";; esac
 echo "PASS (layer 5a): unsafe worker/dispatch names are refused"
 
 guard=""; command -v timeout >/dev/null && guard="timeout 10"

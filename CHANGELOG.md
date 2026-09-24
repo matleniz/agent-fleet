@@ -10,6 +10,17 @@ Unreleased until the first one.
 
 ## [Unreleased]
 
+### Fixed
+- `_dispatch-run` records `done rc=N` even when the pack exits non-zero (`set -e`
+  previously aborted before the status write — forever-"running", hung
+  `fleet wait`). Regression: `test/dispatch.sh` layer 2c.
+- Antigravity headless: `-p` no longer consumes `--dangerously-skip-permissions`
+  as the prompt (`agy --dangerously-skip-permissions … -p "$task"`). Layer 1 now
+  rejects any `-p --…` ordering.
+- `fleet_valid_name` rejects names starting with `-` (so `fleet w --help` is not
+  a ghost worker). `add-agent` available list is pack dirs only (not
+  `hub-mount-ns.sh`). `grep -Fxq --` for tmux window names.
+
 ### Added
 - `fleet gate` — the project-declared pre-PR validation gate. A project lists
   its checks in `GATE_CMDS` (its .env, one shell command per line, auto-fix

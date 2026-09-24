@@ -205,6 +205,8 @@ fleet_node_heap_guard() {
 fleet_valid_name() {  # <name> [<what>]
   case "${1-}" in
     '') echo "error: empty ${2:-name}" >&2; return 2 ;;
+    -*)
+      echo "error: ${2:-name} '$1' — must not start with '-'" >&2; return 2 ;;
     .|..)
       echo "error: ${2:-name} '$1' — '.' and '..' are reserved path components, not allowed" >&2; return 2 ;;
     *[!a-zA-Z0-9._-]*)

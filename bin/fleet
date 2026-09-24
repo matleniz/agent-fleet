@@ -452,7 +452,7 @@ ensure_window_snippet() {  # <sess> <win> <inner-cmd>
   wcmd="$(printf '%q' "$3; exec bash")"
   cat <<SNIP
 tmux has-session -t "$sess" 2>/dev/null || tmux new-session -d -s "$sess" -n _home
-if tmux list-windows -t "$sess" -F '#{window_name}' 2>/dev/null | grep -Fxq "$win"; then
+if tmux list-windows -t "$sess" -F '#{window_name}' 2>/dev/null | grep -Fxq -- "$win"; then
   info="\$(tmux display-message -p -t "$sess:$win" '#{pane_pid} #{pane_current_command}' 2>/dev/null || true)"
   pid="\${info%% *}"; cmd="\${info##* }"
   case "\$cmd" in
@@ -701,7 +701,11 @@ cmd_add_agent() {
   [ -z "$pack" ] && { echo "usage: fleet add-agent <pack>" >&2; exit 2; }
   [ -f "$FLEET_PACKS_DIR/$pack/pack.sh" ] || {
     echo "error: unknown pack '$pack'; available:" >&2
-    ls "$FLEET_PACKS_DIR" | sed 's/^/  /' >&2
+    # Only real packs (dirs with pack.sh) — never loose helpers like hub-mount-ns.sh.
+    for d in "$FLEET_PACKS_DIR"/*/pack.sh; do
+      [ -f "$d" ] || continue
+      printf '  %s\n' "$(basename "$(dirname "$d")")" >&2
+    done
     exit 2
   }
   if fleet_agent_enabled "$pack"; then
@@ -1069,10 +1073,15 @@ cmd_dispatch_run() {  # internal: foreground headless launch inside a tmux windo
   # control returns here to record completion (the "worker finished" signal).
   # FLEET_MODEL (set by `dispatch --model`) is passed as $2; packs that support a
   # per-launch model use it, others ignore the extra arg.
+  # CRITICAL: this file runs under `set -e`. A bare failing subshell aborts before
+  # `rc=$?` and the status write — coordinators then see forever-"running" and
+  # `fleet wait` hangs (MAT-13). Disable -e around the launch; restore after.
+  set +e
   ( pack_launch_headless "$preamble
 
 $task" "${FLEET_MODEL:-}" )
   local rc=$?
+  set -e
   local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
   printf 'done rc=%s' "$rc" > "$sdir/$name.status"
   printf '%s %s done rc=%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$rc" >> "$sdir/events.log"

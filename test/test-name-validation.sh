@@ -70,7 +70,15 @@ echo "[4] fleet send <machine> <malicious window> <text> — rejected before ssh
 out="$("$FLEET" --project sandbox send vm "$PAYLOAD" "hello" 2>&1)"; rc=$?
 check "send" 2 "$rc" "$out"
 
-echo "[5] marker never created (rejection happened before any command execution)"
+echo "[5] fleet w --help — leading-dash name rejected"
+out="$("$FLEET" --project sandbox w --help 2>&1)"; rc=$?
+if [ "$rc" != 2 ]; then bad "w --help: expected rc 2, got $rc (out: $out)"
+elif ! printf '%s' "$out" | grep -qi "must not start with"; then
+  bad "w --help: leading-dash message missing (out: $out)"
+else ok "w --help"
+fi
+
+echo "[6] marker never created (rejection happened before any command execution)"
 if [ -e "$MARKER" ]; then bad "marker file exists — injection executed!"
 else ok "no marker file — payload never ran"
 fi

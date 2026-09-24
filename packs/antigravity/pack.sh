@@ -56,10 +56,12 @@ PY
 
 # Headless launch for `fleet dispatch`: one task non-interactively, through the
 # same mount-namespace jail as pack_launch (hub read-only, kernel-enforced).
+# Flag order matters: agy's `-p` consumes the next argv as the prompt, so
+# `--dangerously-skip-permissions` must NOT follow `-p` (MAT-14).
 pack_launch_headless() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
-  _fleet_hub_ro_exec agy -p --dangerously-skip-permissions "${adddir[@]}" "$1"
+  _fleet_hub_ro_exec agy --dangerously-skip-permissions "${adddir[@]}" -p "$1"
 }
 
 # fleet global: agy reuses ~/.gemini/, whose GEMINI.md is the global instructions
