@@ -33,7 +33,18 @@ for s in sessions:  # newest first
 # Headless launch for `fleet dispatch`: run one task non-interactively. --auto
 # auto-approves everything not explicitly denied, so the hub edit denies in
 # opencode.json still hold (same posture as pack_launch's interactive --auto).
-pack_launch_headless() { fleet_node_heap_guard; exec opencode run --auto "$1"; }
+#
+# MAT-15: opencode 1.17 `run` can hang in a TUI (model picker) even with --auto
+# and no TTY. Bound the wait so dispatch / write-probe cannot stall forever.
+# Override: OPENCODE_HEADLESS_TIMEOUT (seconds, default 300).
+pack_launch_headless() {
+  fleet_node_heap_guard
+  local t="${OPENCODE_HEADLESS_TIMEOUT:-300}"
+  if command -v timeout >/dev/null 2>&1; then
+    exec timeout --foreground -k 10 "$t" opencode run --auto --format json "$1"
+  fi
+  exec opencode run --auto --format json "$1"
+}
 
 # fleet global: opencode reads ~/.config/opencode/AGENTS.md natively (and also
 # ~/.claude/CLAUDE.md), so symlink it at the canonical per-user file. Backs up a
@@ -154,5 +165,5 @@ pack_doctor() {
   fleet_doctor_preamble opencode "npm i -g opencode-ai" "${1:-}" || return
   local v n; v="$(opencode --version 2>/dev/null | head -1)"
   n="$(python3 -c 'import json;print(len(json.load(open("'"$HOME"'/.local/share/opencode/auth.json"))))' 2>/dev/null || echo 0)"
-  echo "installed ($v) — $n provider credential(s); free gateway models need none"
+  echo "installed ($v) — $n provider credential(s); free gateway models need none; headless bounded by OPENCODE_HEADLESS_TIMEOUT=${OPENCODE_HEADLESS_TIMEOUT:-300}s"
 }

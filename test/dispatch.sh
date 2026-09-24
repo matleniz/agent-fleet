@@ -24,7 +24,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 CASES=(
   "claude:claude:-p|--permission-mode auto"
   "gemini:gemini:-p|--approval-mode yolo"
-  "opencode:opencode:run|--auto"
+  "opencode:opencode:run|--auto|--format json"
   "cursor:agent:-p|--force"
   "antigravity:agy:-p|--dangerously-skip-permissions"
   "copilot:copilot:-p|--allow-all-tools"

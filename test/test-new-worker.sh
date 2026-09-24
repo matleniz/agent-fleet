@@ -95,6 +95,17 @@ eq "exactly one branch '$name'" "$branch_count" "1"
 
 [ -d "$ROOT/wt/$name" ] && ok "winner's worktree dir exists" || bad "winner's worktree dir missing"
 
+# ---- 3. pick_base: non-TTY uses DEFAULT_BASE (MAT-19) ----
+echo "[3] pick_base — non-TTY → DEFAULT_BASE"
+pick_out="$(
+  MAIN="$ROOT/code" DEFAULT_BASE=main bash <<EOS
+set -euo pipefail
+eval "\$(sed -n '/^pick_base()/,/^}/p' "$REPO/bin/fleet")"
+pick_base "wtname" </dev/null
+EOS
+)"
+eq "pick_base non-TTY → main" "$pick_out" "main"
+
 echo
 echo "test-new-worker: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

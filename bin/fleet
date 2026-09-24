@@ -192,6 +192,9 @@ worktree_paths() {  # every worktree under WT_HOME
 # on disk, not just enabled ones, so a pack disabled later still matches.
 barrier_ignore_regex() {
   local d a f pats=""
+  # Core fleet sidecars (dispatch/write-probe) — always ignore for del/prune even
+  # when the enabled pack did not declare them (MAT-23).
+  pats="\\.dispatch-marker\$|\\.model-marker\$|\\.fleet-witness\$"
   for d in "$FLEET_PACKS_DIR"/*/; do
     a="$(basename "$d")"
     [ -f "$FLEET_PACKS_DIR/$a/pack.sh" ] || continue
@@ -200,7 +203,7 @@ barrier_ignore_regex() {
       pats="${pats}|${f//./\\.}\$"
     done < <(pack_in "$a" pack_barrier_files 2>/dev/null || true)
   done
-  printf '%s' "${pats#|}"
+  printf '%s' "$pats"
 }
 
 # real_dirty runs inside command substitutions (subshells), so its lazy
@@ -301,6 +304,13 @@ pick_base() {
       | awk -F'\t' '$1!="origin" && $1!="origin/HEAD" && !seen[$1]++' | head -n 20
   )
   if [ "${#refs[@]}" -eq 0 ]; then echo "$default"; return; fi
+  # MAT-19: never block scripts/cron on an interactive menu.
+  # - non-TTY stdin → DEFAULT_BASE
+  # - exactly one candidate → that ref
+  if [ ! -t 0 ]; then echo "$default"; return; fi
+  if [ "${#refs[@]}" -eq 1 ]; then
+    IFS=$'\t' read -r rname _ <<<"${refs[0]}"; echo "$rname"; return
+  fi
   {
     echo "Base branch for new worker '$name' (most recent on top):"
     local i=1 line rname rdate rsubj

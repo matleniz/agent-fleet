@@ -15,13 +15,24 @@ Unreleased until the first one.
   previously aborted before the status write — forever-"running", hung
   `fleet wait`). Regression: `test/dispatch.sh` layer 2c.
 - Antigravity headless: `-p` no longer consumes `--dangerously-skip-permissions`
-  as the prompt (`agy --dangerously-skip-permissions … -p "$task"`). Layer 1 now
-  rejects any `-p --…` ordering.
+  as the prompt (`agy --dangerously-skip-permissions … -p "$task"`). Layer 1
+  asserts `-p <task>` adjacency for antigravity.
 - `fleet_valid_name` rejects names starting with `-` (so `fleet w --help` is not
   a ghost worker). `add-agent` available list is pack dirs only (not
   `hub-mount-ns.sh`). `grep -Fxq --` for tmux window names.
+- Opencode headless: `--format json` + `timeout` bound (`OPENCODE_HEADLESS_TIMEOUT`,
+  default 300s); `fleet_write_probe` bounded by `FLEET_WRITE_PROBE_TIMEOUT`
+  (default 90s) so a hung CLI cannot stall `doctor --write-probe` (MAT-15).
+- Gemini `pack_doctor` documents Antigravity migration / `UNSUPPORTED_CLIENT` (MAT-16).
+- `pick_base` skips the interactive menu on non-TTY or when only one ref exists
+  (MAT-19).
+- `del`/`prune` always ignore `.dispatch-marker` / `.model-marker` / `.fleet-witness`
+  (MAT-23).
+- `fleet-init` warns when an existing hub is missing `AGENTS.md` / `INDEX.md` (MAT-20).
 
 ### Added
+- `stub` agent pack (`packs/stub/`) — offline CI/dogfood pack; sandbox can set
+  `AGENTS="stub"` without `PACK BROKEN` (MAT-18).
 - `fleet gate` — the project-declared pre-PR validation gate. A project lists
   its checks in `GATE_CMDS` (its .env, one shell command per line, auto-fix
   flags included); a worker runs them all in one shot before opening a PR

@@ -53,7 +53,7 @@ git -C "$ROOT/code" -c user.name=sandbox -c user.email=sandbox@localhost \
 # the checked-out branch, main).
 "$SELF_DIR/../bin/fleet-init" sandbox \
   --code "$ROOT/code" --hub "$ROOT/hub" --wt "$ROOT/wt" \
-  --agents claude,gemini,opencode,cursor --queue none --force
+  --agents stub,claude,gemini,opencode,cursor --queue none --force
 
 # Sandbox-specific hub content on top of the seed, committed (the seed
 # deliberately does not commit).
@@ -79,8 +79,8 @@ git -C "$ROOT/hub" -c user.name=sandbox -c user.email=sandbox@localhost \
 
 # Machine registry: register a placeholder VM and select it, so the sandbox
 # exercises the N-machine surface (fleet ls / machines / status). The host is
-# unreachable on purpose — the point is config resolution and the tree shape,
-# not a live remote (that needs a real container).
+# unreachable on purpose (vm.sandbox.invalid) — config resolution + tree shape
+# only, not a live remote (MAT-18: intentional fixture, not a misconfig).
 "$SELF_DIR/../bin/fleet" --project sandbox machines add vm vm.sandbox.invalid >/dev/null 2>&1 || true
 grep -q '^MACHINES=' "$FLEET_HOME/projects/sandbox.env" \
   || printf 'MACHINES="local vm"\n' >> "$FLEET_HOME/projects/sandbox.env"

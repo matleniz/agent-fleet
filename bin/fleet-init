@@ -257,7 +257,15 @@ if [ -n "$hub" ]; then
       exit 1
     fi
   else
-    echo "[fleet-init] hub $hub exists — left as is."
+    missing=()
+    [ -f "$hub/AGENTS.md" ] || missing+=("AGENTS.md")
+    [ -f "$hub/INDEX.md" ] || missing+=("INDEX.md")
+    if [ "${#missing[@]}" -gt 0 ]; then
+      echo "[fleet-init] WARNING: hub $hub exists but is incomplete (missing: ${missing[*]})." >&2
+      echo "[fleet-init]          left as is — re-seed manually or remove the hub dir and re-run fleet-init." >&2
+    else
+      echo "[fleet-init] hub $hub exists — left as is."
+    fi
   fi
 fi
 

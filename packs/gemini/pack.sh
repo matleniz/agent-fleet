@@ -112,8 +112,12 @@ pack_install() { echo "npm install -g @google/gemini-cli"; }
 # Optional: fleet doctor status line.
 pack_doctor() {
   fleet_doctor_preamble gemini "npm i -g @google/gemini-cli" "${1:-}" || return
-  local v auth="NO AUTH (set GEMINI_API_KEY in ~/.gemini/.env; OAuth for individuals was retired)"
+  local v auth
   v="$(gemini --version 2>/dev/null | head -1)"
-  { [ -n "${GEMINI_API_KEY:-}" ] || grep -q GEMINI_API_KEY "$HOME/.gemini/.env" 2>/dev/null; } && auth="API key configured"
+  if { [ -n "${GEMINI_API_KEY:-}" ] || grep -q GEMINI_API_KEY "$HOME/.gemini/.env" 2>/dev/null; }; then
+    auth="API key configured (OAuth for individuals retired; free-tier may still fail UNSUPPORTED_CLIENT — prefer antigravity pack)"
+  else
+    auth="NO AUTH — set GEMINI_API_KEY in ~/.gemini/.env (OAuth for individuals retired). IneligibleTierError/UNSUPPORTED_CLIENT → prefer antigravity pack: https://antigravity.google"
+  fi
   echo "installed (v$v) — $auth"
 }

@@ -163,11 +163,30 @@ fleet_load_pack() {
 # Run AFTER fleet_load_pack (pack_launch_headless must be in scope).
 fleet_write_probe() {
   rm -f .fleet-witness
-  ( pack_launch_headless 'Create a file named .fleet-witness containing the text OK in the current directory, then stop. Do nothing else.' ) >/dev/null 2>&1 || true
+  local prompt='Create a file named .fleet-witness containing the text OK in the current directory, then stop. Do nothing else.'
+  # Bound the wait: a hung headless CLI (e.g. opencode TUI, MAT-15) must not
+  # stall `fleet doctor --write-probe` forever. Override: FLEET_WRITE_PROBE_TIMEOUT.
+  local t="${FLEET_WRITE_PROBE_TIMEOUT:-90}"
+  set +e
+  ( pack_launch_headless "$prompt" ) >/dev/null 2>&1 &
+  local pid=$!
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    i=$((i + 1))
+    if [ "$i" -ge "$t" ]; then
+      kill -TERM "$pid" 2>/dev/null
+      sleep 2
+      kill -KILL "$pid" 2>/dev/null
+      break
+    fi
+    sleep 1
+  done
+  wait "$pid" 2>/dev/null
+  set -e
   if [ -f .fleet-witness ]; then
     echo "write-probe: PASS (headless mode can write here)"
   else
-    echo "write-probe: FAIL (headless wrote nothing — check managed permissions / login / userns)"
+    echo "write-probe: FAIL (headless wrote nothing or timed out after ${t}s — check managed permissions / login / userns / pack headless)"
   fi
 }
 
