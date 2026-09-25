@@ -7,15 +7,8 @@ instead: ntfy notifications (claude pack hooks + `bin/fleet-notify`) and
 
 ## Bugs to fix
 
-- **`fleet doctor --write-probe` ignores `--machine`** (found 2026-07-16). In
-  `bin/fleet`, `cmd_doctor()` hardcodes `target_machine local` on the
-  `--write-probe` path, so `fleet doctor --write-probe --machine X` always
-  probes `local`. The only route to a VM is `fleet --machine X doctor
-  --write-probe` (top-level flag), and even then the remote engine must be
-  >= 1368968 or the container's older `cmd_doctor` drops the flag and prints a
-  plain doctor report with no PASS/FAIL line. Fix: forward the selected machine
-  into the probe path, and detect+warn when the remote engine predates the
-  write-probe subcommand.
+_(none open — last entry shipped 2026-07: `fleet doctor --write-probe`
+honors `--machine` after the subcommand; see `test/dispatch.sh` layer 4b.)_
 
 ## Try as-is (no code to write)
 

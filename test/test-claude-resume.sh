@@ -66,5 +66,35 @@ eq "empty id when no real session" "$(_claude_last_session_id "/only/aborted")" 
 # --- 5. no session dir at all -> empty id, no error ---------------------------
 eq "empty id when no dir" "$(_claude_last_session_id "/nope/never")" ""
 
+# --- 6. pack_launch modes: --continue resolves last id; --pick is bare --resume -
+REC="$(mktemp)"; export REC
+stub="$(mktemp -d)"
+printf '#!/usr/bin/env bash\nprintf "%%s" "$*" > "$REC"\n' > "$stub/claude"; chmod +x "$stub/claude"
+SELF_CFG="$SELF_DIR/../bin/fleet-config.sh"
+fake_cwd="$(mktemp -d)/mlops-hub"; mkdir -p "$fake_cwd"
+d_fake="$HOME/.claude/projects/$(_claude_proj_slug "$fake_cwd")"; mkdir -p "$d_fake"
+printf '%s\n' '{"type":"user"}' '{"type":"assistant"}' > "$d_fake/sid-continue.jsonl"
+touch -d '2026-07-20 16:00:00' "$d_fake/sid-continue.jsonl"
+
+: > "$REC"
+( cd "$fake_cwd"; PATH="$stub:$PATH"
+  # shellcheck disable=SC1090
+  source "$SELF_CFG"; source "$PACK"; pack_launch --continue ) || true
+got="$(cat "$REC")"
+case "$got" in *"--resume sid-continue"*) ok "pack_launch --continue passes last session id";;
+  *) bad "pack_launch --continue (got '$got')";; esac
+
+: > "$REC"
+( cd "$fake_cwd"; PATH="$stub:$PATH"
+  # shellcheck disable=SC1090
+  source "$SELF_CFG"; source "$PACK"; pack_launch --pick ) || true
+got="$(cat "$REC")"
+case "$got" in *"--resume sid-continue"*) bad "pack_launch --pick must not resolve an id (got '$got')";;
+  *"--resume"*) ok "pack_launch --pick passes bare --resume";;
+  *) bad "pack_launch --pick (got '$got')";; esac
+
+rm -rf "$stub" "$(dirname "$fake_cwd")"
+rm -f "$REC"
+
 echo "claude-resume tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

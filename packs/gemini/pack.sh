@@ -6,9 +6,13 @@
 
 # Launch Gemini in the CURRENT directory (caller cd's first).
 # --approval-mode yolo is the equivalent of claude's skipped permissions.
+# Modes: --continue / --pick / --resume (synonym) all map to --resume latest —
+# gemini has no interactive session picker, so --pick falls back to continue-last.
 pack_launch() {
   local resume=()
-  [ "${1:-}" = "--resume" ] && resume=(--resume latest)
+  case "${1:-}" in
+    --resume|--continue|--pick) resume=(--resume latest) ;;
+  esac
   fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
   exec gemini --approval-mode yolo "${resume[@]}"
 }

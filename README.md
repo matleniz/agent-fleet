@@ -281,6 +281,7 @@ agent-fleet/
 │   └── skills/               conversation-compress, conversation-feedback, dispatch-work, doc-nav, process-agent-queue, propose-doc-change, resolve-finding
 ├── test/
 │   ├── make-sandbox.sh       throwaway sandbox project to exercise the tools
+│   ├── make-pack-interop.sh  non-Claude cross-pack dogfood project (agy↔cursor)
 │   ├── test-guard.sh         unit + isolated-E2E tests for the resource guard rail
 │   ├── test-context.sh       isolated-fixture tests for the context reporter
 │   ├── dispatch.sh           headless dispatch: per-pack flags, tmux worker, remote, write-probe

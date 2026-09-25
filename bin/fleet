@@ -63,7 +63,9 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
   r [w <n>|hub|del <n>|broadcast "<msg>"]   shorthand for --machine <remote>:
                        bare = attach its tmux; w/hub open there; del removes a
                        remote worker; broadcast types into every remote window
-  ls                   list worktrees (per-pack session markers, machine header)
+  ls                   list local CODE_REPO worktrees (session markers; machine
+                       header is a reminder). Live remote sessions:
+                       status --remote / peek — not this command
   del <name>           remove a worktree (refuses if uncommitted)
   prune                remove every worktree whose branch is merged
   refresh [<name>]     re-run enabled packs' worker setup (one worktree, or all)
@@ -163,10 +165,13 @@ open_in() {  # cd somewhere, offer resume, launch (never returns)
   local dest="$1"
   cd "$dest"
   if pack_in "$agent" pack_has_sessions "$dest"; then
-    read -rp "  (r)esume last $agent session or (n)ew? [R/n] " ans
-    case "${ans:-r}" in
+    # Three-way: continue-last (default) / CLI session picker / fresh.
+    # Packs map --continue and --pick; those without a picker fall back to continue.
+    read -rp "  (c)ontinue last $agent session, (r)esume picker, or (n)ew? [C/r/n] " ans
+    case "${ans:-c}" in
       n|N) launch ;;
-      *)   launch --resume ;;
+      r|R) launch --pick ;;
+      *)   launch --continue ;;
     esac
   fi
   launch
@@ -598,7 +603,10 @@ cmd_ls() {
   FLEET_CACHE_DIR="$(mktemp -d)"; export FLEET_CACHE_DIR
   trap 'rm -rf "$FLEET_CACHE_DIR"' EXIT
   prime_barrier_ignore
-  echo "worktrees [$PROJ_NAME] — 'fleet w NAME' to (re)open, bare 'fleet' for the coordinator:"
+  # Always the local CODE_REPO worktrees — even with --machine M. Remote live
+  # sessions live in that machine's tmux; use `fleet status --remote` / `peek`.
+  echo "worktrees [$PROJ_NAME] (local CODE_REPO) — 'fleet w NAME' to (re)open, bare 'fleet' for the coordinator:"
+  echo "  (remote sessions: fleet status --remote / fleet peek <machine> <win>)"
   local m
   for m in $(fleet_machines); do
     if fleet_load_machine "$m" 2>/dev/null; then
@@ -943,9 +951,21 @@ dispatch_state_dir() { echo "$FLEET_ROOT/dispatch/$PROJ_NAME"; }
 # only rail is off. Removing the window here closes that loop. Local interactive
 # and dispatched workers share the dispatch_tmux session, so one kill covers both;
 # the remote path (fleet r del) kills the container window separately. Best-effort.
+kill_done_windows() {  # <tmux-session> <worker-name> — every _done-<name> window
+  # By window id, not name: legacy duplicates make a name target ambiguous.
+  local wid
+  for wid in $(tmux list-windows -t "$1" -F '#{window_id} #{window_name}' 2>/dev/null \
+                 | awk -v n="_done-$2" '$2 == n {print $1}'); do
+    tmux kill-window -t "$wid" 2>/dev/null || true
+  done
+}
 reap_worker_state() {  # <worker-name>
   local name="$1" sdir
-  command -v tmux >/dev/null 2>&1 && tmux kill-window -t "$(dispatch_tmux):$name" 2>/dev/null || true
+  if command -v tmux >/dev/null 2>&1; then
+    # A finished dispatch renamed itself _done-<name> (cmd_dispatch_run).
+    tmux kill-window -t "$(dispatch_tmux):$name" 2>/dev/null || true
+    kill_done_windows "$(dispatch_tmux)" "$name"
+  fi
   sdir="$(dispatch_state_dir)"
   rm -f "$sdir/$name.status" "$sdir/$name.meta"
 }
@@ -1057,6 +1077,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [ba
   local run="env FLEET_CONF='$CONF' FLEET_HOME='$FLEET_ROOT' FLEET_PACKS_DIR='$FLEET_PACKS_DIR'${model:+ FLEET_MODEL='$model'} fleet -a $agent _dispatch-run $name $taskfile"
   tmux has-session -t "$LT" 2>/dev/null || tmux new-session -d -s "$LT" -n _home
   tmux kill-window -t "$LT:$name" 2>/dev/null || true   # replace any stale window
+  kill_done_windows "$LT" "$name"   # and a previous run's _done- pane (no duplicate names)
   tmux new-window -t "$LT" -n "$name" \
     "$run; echo; echo '[worker $name exited — window kept for inspection; Ctrl-b & to close]'; exec bash"
   fleet_guard_unlock   # window exists now (S4) — safe to admit the next dispatch
@@ -1099,6 +1120,12 @@ $task" "${FLEET_MODEL:-}" )
   # Human's phone ping (best effort), same channel as the pack Stop hooks.
   [ -n "${NTFY_TOPIC:-}" ] && "$NOTIFY" "$NTFY_TOPIC" "$name" "done rc=$rc" >/dev/null 2>&1
   echo "[fleet] worker '$name' finished (rc=$rc) — recorded for the coordinator (fleet ls / fleet wait)"
+  # Free the MAX_WORKERS slot while keeping the pane for peek/inspection.
+  # guard_probe_snippet ignores ^_done- (pack-interop dogfood 2026-09-25: a
+  # coordinator hit 6/6 on finished bash panes and could not dispatch again).
+  if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; then
+    tmux rename-window -t "$TMUX_PANE" "_done-$name" 2>/dev/null || true
+  fi
   return "$rc"
 }
 
@@ -1320,12 +1347,33 @@ cmd_peek() {  # fleet peek <machine> <window> — dump a session's terminal
   { [ -z "$mname" ] || [ -z "$win" ]; } && { echo "usage: fleet peek <machine> <window>" >&2; exit 2; }
   fleet_valid_name "$win" "window name" || exit 2   # threads through ssh/docker unquoted
   fleet_load_machine "$mname" || exit 2
+  # Finished dispatches rename to _done-<name> (still peekable under the old name).
+  local target="$win"
   if [ "$M_LOCAL" = 1 ]; then
-    tmux capture-pane -p -t "$M_TMUX:$win" 2>/dev/null \
+    if ! tmux list-windows -t "$M_TMUX" -F '#{window_name}' 2>/dev/null | grep -Fxq -- "$win"; then
+      if tmux list-windows -t "$M_TMUX" -F '#{window_name}' 2>/dev/null | grep -Fxq -- "_done-$win"; then
+        target="_done-$win"
+      fi
+    fi
+    tmux capture-pane -p -t "$M_TMUX:$target" 2>/dev/null \
       || { echo "error: no window '$win' in local tmux '$M_TMUX'" >&2; exit 1; }
   else
-    ssh "$M_HOST" "docker exec $M_CONTAINER tmux capture-pane -p -t $M_TMUX:$win" 2>/dev/null \
-      || { echo "error: could not capture $mname:$win" >&2; exit 1; }
+    # Success: one ssh+docker hop. On failure, diagnose which layer broke
+    # (ssh host / container / missing window) instead of a opaque "could not capture".
+    ssh -o ConnectTimeout=8 -o BatchMode=yes "$M_HOST" \
+      "docker exec $M_CONTAINER tmux capture-pane -p -t $M_TMUX:$win 2>/dev/null \
+       || docker exec $M_CONTAINER tmux capture-pane -p -t $M_TMUX:_done-$win" 2>/dev/null \
+      || {
+        if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$M_HOST" true >/dev/null 2>&1; then
+          echo "error: cannot reach $mname ($M_HOST) via ssh" >&2
+        elif ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$M_HOST" \
+          "docker exec $M_CONTAINER true" >/dev/null 2>&1; then
+          echo "error: docker exec failed on $mname (container '$M_CONTAINER')" >&2
+        else
+          echo "error: no window '$win' in $mname tmux session '$M_TMUX'" >&2
+        fi
+        exit 1
+      }
   fi
 }
 

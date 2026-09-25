@@ -89,9 +89,10 @@ echo "PASS (layer 1b): claude adds --model only when a model is given"
 # ---------- Layer 1c: claude INTERACTIVE launch posture (workers + coordinator) ----------
 # pack_launch must carry auto mode too — the org's managed settings silently
 # downgrade --dangerously-skip-permissions to prompting (every write denied), so
-# that flag must never come back on ANY launch path. --resume resolves the last
-# REAL session by id (see test-claude-resume.sh); with NO prior session it falls
-# back to --continue — the empty-HOME below pins that deterministic fallback.
+# that flag must never come back on ANY launch path. --continue / --resume resolve
+# the last REAL session by id (see test-claude-resume.sh); with NO prior session
+# they fall back to CLI --continue. --pick hands off to the bare --resume picker.
+# The empty-HOME below pins the deterministic continue-last fallback.
 printf '#!/usr/bin/env bash\nprintf "%%s" "$*" > "$REC"\n' > "$stub/claude"; chmod +x "$stub/claude"
 : > "$REC"
 ( PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"; pack_launch ) || true
@@ -99,13 +100,27 @@ got="$(cat "$REC" 2>/dev/null || true)"
 case "$got" in *"--permission-mode auto"*) ;; *) fail "claude interactive: missing '--permission-mode auto' (got: $got)";; esac
 case "$got" in *"dangerously"*) fail "claude interactive: bypass flag is back (got: $got)";; *) ;; esac
 : > "$REC"
-emptyhome="$(mktemp -d)"   # no ~/.claude sessions here -> --resume falls back to --continue
+emptyhome="$(mktemp -d)"   # no ~/.claude sessions here -> --continue falls back to CLI --continue
+( HOME="$emptyhome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"; pack_launch --continue ) || true
+got="$(cat "$REC" 2>/dev/null || true)"
+case "$got" in *"--permission-mode auto"*"--continue"*|*"--continue"*"--permission-mode auto"*) ;; \
+  *) fail "claude interactive --continue: expected auto mode + --continue fallback (got: $got)";; esac
+: > "$REC"
 ( HOME="$emptyhome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"; pack_launch --resume ) || true
 got="$(cat "$REC" 2>/dev/null || true)"; rm -rf "$emptyhome"
 case "$got" in *"--permission-mode auto"*"--continue"*|*"--continue"*"--permission-mode auto"*) ;; \
-  *) fail "claude interactive --resume: expected auto mode + --continue fallback (got: $got)";; esac
+  *) fail "claude interactive --resume (synonym): expected auto mode + --continue fallback (got: $got)";; esac
+: > "$REC"
+( PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/claude/pack.sh"; pack_launch --pick ) || true
+got="$(cat "$REC" 2>/dev/null || true)"
+# Picker = bare --resume (no session id). Stub records "$*".
+case "$got" in *"--permission-mode auto"*"--resume"|*"--resume"*"--permission-mode auto"*) ;; \
+  *) fail "claude interactive --pick: expected auto mode + bare --resume picker (got: $got)";; esac
+# Nothing after --resume except optional further flags (resume is last today).
+rest="${got##*--resume}"; rest="${rest#"${rest%%[![:space:]]*}"}"  # trim leading space
+case "$rest" in ""|--*) ;; *) fail "claude interactive --pick: must not pass a session id (got: $got)";; esac
 rm -f "$stub/claude"
-echo "PASS (layer 1c): claude interactive launch is auto mode (no bypass flag), --resume falls back to --continue with no prior session"
+echo "PASS (layer 1c): claude interactive launch is auto mode; --continue/--resume fall back; --pick opens picker"
 
 # ---------- Layer 1d: launch survives `set -e` WITHOUT an MCP profile ----------
 # Production regression this pins down: bin/fleet runs `set -euo pipefail`, and
@@ -185,8 +200,28 @@ FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox ls 2>/dev/null \
   | grep -q "dispatch: done rc=0" || fail "fleet ls does not show the dispatch status"
 FLEET_PACKS_DIR="$packs" FLEET_WAIT_POLL=1 "$ENGINE/bin/fleet" --project sandbox wait dtest >/dev/null 2>&1 \
   || fail "fleet wait did not return success for a done worker"
+# Finished dispatch renames the pane to _done-<name> so it no longer burns a
+# MAX_WORKERS slot (pack-interop dogfood 2026-09-25).
+for _ in $(seq 1 50); do
+  tmux list-windows -t fleet-sandbox -F '#{window_name}' 2>/dev/null | grep -Fxq -- '_done-dtest' && break
+  sleep 0.2
+done
+tmux list-windows -t fleet-sandbox -F '#{window_name}' 2>/dev/null | grep -Fxq -- '_done-dtest' \
+  || fail "finished dispatch did not rename window to _done-dtest"
+# peek must still resolve the worker under its original name
+FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox peek local dtest >/dev/null 2>&1 \
+  || fail "fleet peek local dtest failed after _done- rename"
+# fleet del must reap the renamed pane too — including a legacy duplicate
+# _done-dtest (re-dispatch under one name used to leave two, making the name
+# target ambiguous).
+tmux new-window -d -t fleet-sandbox -n _done-dtest "exec sleep 600"
+FLEET_PACKS_DIR="$packs" "$ENGINE/bin/fleet" --project sandbox del dtest >/dev/null 2>&1 \
+  || fail "fleet del dtest failed"
+if tmux list-windows -t fleet-sandbox -F '#{window_name}' 2>/dev/null | grep -Fxq -- '_done-dtest'; then
+  fail "fleet del left a _done-dtest window behind"
+fi
 rm -rf "$FLEET_HOME/dispatch/sandbox"
-echo "PASS (layer 2): dispatch ran the detached worker (task + preamble) and recorded completion (status + fleet ls + fleet wait)"
+echo "PASS (layer 2): dispatch ran the detached worker (task + preamble) and recorded completion (status + fleet ls + fleet wait + _done- rename + del reaps _done-)"
 
 # ---------- Layer 2c: failing pack still records done rc=N (MAT-13) ----------
 # Under `set -e`, a bare failing subshell used to abort _dispatch-run before the

@@ -31,12 +31,15 @@ _agy_db="$HOME/.gemini/antigravity-cli/conversation_summaries.db"
 # goes through _fleet_hub_ro_exec: on a hub project agy runs jailed with the hub
 # read-only, which is what makes --dangerously-skip-permissions acceptable here
 # (the blast radius is the worktree; the shared truth cannot be corrupted).
+# Modes: --continue / --pick / --resume (synonym). No picker — --pick falls back
+# to continue-last for this cwd.
 pack_launch() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
-  if [ "${1:-}" = "--resume" ]; then
-    local cid
-    cid="$(python3 - "$_agy_db" "$PWD" <<'PY'
+  case "${1:-}" in
+    --resume|--continue|--pick)
+      local cid
+      cid="$(python3 - "$_agy_db" "$PWD" <<'PY'
 import sqlite3, sys
 try:
     db = sqlite3.connect(sys.argv[1])
@@ -49,8 +52,9 @@ except Exception:
     print("")
 PY
 )"
-    [ -n "$cid" ] && _fleet_hub_ro_exec agy --dangerously-skip-permissions "${adddir[@]}" --conversation "$cid"
-  fi
+      [ -n "$cid" ] && _fleet_hub_ro_exec agy --dangerously-skip-permissions "${adddir[@]}" --conversation "$cid"
+      ;;
+  esac
   _fleet_hub_ro_exec agy --dangerously-skip-permissions "${adddir[@]}"
 }
 

@@ -46,11 +46,15 @@ From this hub:
   when you are an agent, not a human at a keyboard.
 - `fleet -a <pack> w <name>` — pick the agent CLI for that worker. `fleet
   agents` lists the packs enabled for this project; `fleet doctor` shows which
-  are installed and logged in.
+  are installed and logged in. Cross-pack is supported: a coordinator on pack A
+  may `fleet -a B dispatch …` a worker on pack B (sessions are not portable —
+  do not try to resume A's transcript in B).
 - `fleet r w <name>` — same, on the project's always-on VM (if configured).
 - `fleet ls` — worktrees + per-pack session markers; `fleet status` for the
-  worker tree, commits, and queue; `fleet prune` at checkpoints to drop merged
-  worktrees.
+  worker tree, commits, and queue; `fleet prune` / `fleet del <name>` at
+  checkpoints to drop merged worktrees (and free interactive panes that still
+  count toward `MAX_WORKERS`; finished headless panes rename to `_done-<name>`
+  and no longer count).
 - `fleet chats [<worker>]` — per-pack pointer to the conversation recorded in a
   worktree (bare = this hub, i.e. your own session). When you switch a worker's
   agent, or one dies mid-task (crash, credit limit), read the prior transcript to

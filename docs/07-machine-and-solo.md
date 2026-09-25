@@ -79,6 +79,11 @@ survives disconnects and is observable from anywhere: `fleet peek <machine>
 types into it (answer a permission prompt from your phone). `fleet r broadcast
 "<msg>"` types the same line into every window of a remote machine.
 
+`fleet ls` always lists **local** `CODE_REPO` worktrees (with a machine-header
+reminder). It does **not** list live tmux sessions on a VM — even with
+`--machine`. For remote session state use `fleet status --remote` or
+`fleet peek <machine> <window>`.
+
 One tmux session per machine holds every window (the coordinator's `hub` plus
 one per worker), but no terminal ever attaches to it directly. tmux shares a
 single active window across all clients of a session, so a raw attach would yank
