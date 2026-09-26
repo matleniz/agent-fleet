@@ -6,10 +6,13 @@
 #
 # Resolution order (NO implicit default: outside a known project dir you must
 # name the project — a silent fallback once sent commands to the wrong project):
-#   1. $FLEET_CONF (already resolved by a parent) if it points to a file
-#   2. explicit project name (arg to fleet_resolve_conf) or $FLEET_PROJECT
-#   3. auto-detect: a projects/*.env whose CODE_REPO, HUB or WT_HOME contains $PWD
-#   4. error, listing known projects
+#   1. explicit project name (non-empty arg to fleet_resolve_conf, i.e. --project)
+#   2. $FLEET_CONF (already resolved by a parent) if it points to a file
+#   3. $FLEET_PROJECT
+#   4. auto-detect: a projects/*.env whose CODE_REPO, HUB or WT_HOME contains $PWD
+#   5. error, listing known projects
+# An inherited FLEET_CONF must NEVER override an explicit --project: a coordinator
+# for A that runs `fleet --project B ...` would otherwise silently drive A's repo.
 
 FLEET_ROOT="${FLEET_HOME:-$HOME/.config/fleet}"
 
@@ -309,8 +312,15 @@ fleet_export_worker_env() {
 }
 
 fleet_resolve_conf() {
-  local proj="${1:-${FLEET_PROJECT:-}}"
-  if [ -n "${FLEET_CONF:-}" ] && [ -f "$FLEET_CONF" ]; then
+  # $1 = explicit --project (may be empty). Do NOT fold FLEET_PROJECT into $1
+  # here: an inherited FLEET_CONF must lose to --project but still beat a soft
+  # FLEET_PROJECT default (child reuse vs. ambient default).
+  local explicit="${1:-}"
+  local proj="${explicit:-${FLEET_PROJECT:-}}"
+  if [ -n "$explicit" ]; then
+    CONF="$FLEET_PROJECTS/$explicit.env"
+    [ -f "$CONF" ] || { echo "error: no project '$explicit' ($CONF)" >&2; _fleet_list; exit 2; }
+  elif [ -n "${FLEET_CONF:-}" ] && [ -f "$FLEET_CONF" ]; then
     CONF="$FLEET_CONF"
   elif [ -n "$proj" ]; then
     CONF="$FLEET_PROJECTS/$proj.env"
