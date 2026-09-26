@@ -63,3 +63,9 @@ Run `fleet-queue` for this project's queue backend:
 - Security: prefer a testable defense; ship the regression test with it.
 - Out of scope (owned by someone else, or living in another repo like IaC) → hand
   it back, do not force it.
+- **Cross-CLI handoff.** If you switch agents or pause work before a PR, write
+  `HANDOFF.md` at the worktree root using `templates/HANDOFF.md` (task,
+  status/result, reason, constraints, next steps, files touched, how to
+  verify). If starting in a worktree with an existing `HANDOFF.md`, read it first
+  to resume immediately.
+

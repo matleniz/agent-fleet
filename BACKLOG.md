@@ -38,10 +38,14 @@ honors `--machine` after the subcommand; see `test/dispatch.sh` layer 4b.)_
   without a hook per CLI. Original proof points: agent-dashboard's
   commit-lint/test gates; Claude agent-teams TaskCompleted hooks (exit 2
   blocks). https://github.com/bjornjee/agent-dashboard
-- **HANDOFF.md convention** — cross-CLI session portability does not exist
-  (no standard, mid-2026); the community fallback is a state/handoff markdown
-  in the worktree when switching agents. Cheap to standardize in the worker
-  skills. https://wal.sh/research/2026-q2-cli-coding-agents/
+- **HANDOFF.md convention** — SHIPPED (2026-09-26). Minimal concrete schema
+  (`templates/HANDOFF.md`) for cross-CLI worktree handoffs (fields: task,
+  status/result, reason, constraints, next steps, files touched, how to
+  verify). Sessions are proprietary and not portable across CLIs; the handoff
+  markdown provides a durable state contract between agents in a shared worktree.
+  Standardized in worker skills (`resolve-finding`, `dispatch-work`) and documented
+  in docs/02-roles-and-barrier.md and docs/03-queue.md.
+  Reference: https://wal.sh/research/2026-q2-cli-coding-agents/
 - **Web-comparison dimension for the method retro** — conversation-feedback
   (docs/04) is deliberately local + transcript-grounded, no web. Separately, a
   low-frequency web-enabled pass could compare our *methods* against the current
