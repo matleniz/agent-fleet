@@ -38,16 +38,99 @@ for s in sessions:  # newest first
 # auto-approves everything not explicitly denied, so the hub edit denies in
 # opencode.json still hold (same posture as pack_launch's interactive --auto).
 #
+# $2 (optional): model for this worker, from `fleet dispatch --model` (else
+# FLEET_MODEL / the opencode config default). -m/--model is a real opencode
+# flag (verified against 1.17.18 `opencode run --help`).
+#
 # MAT-15: opencode 1.17 `run` can hang in a TUI (model picker) even with --auto
 # and no TTY. Bound the wait so dispatch / write-probe cannot stall forever.
 # Override: OPENCODE_HEADLESS_TIMEOUT (seconds, default 300).
+#
+# MAT-101: when the resolved model points at a config provider with an explicit
+# baseURL (typical local / openai-compatible endpoint), probe it first and fail
+# fast with a clear error instead of letting `opencode run` retry until the
+# outer timeout (silent rc=124). Cloud providers without a configured baseURL
+# are not probed.
 pack_launch_headless() {
   fleet_node_heap_guard
   local t="${OPENCODE_HEADLESS_TIMEOUT:-300}"
+  local model="${2:-${FLEET_MODEL:-}}"
+  _opencode_require_provider_reachable "$model" || exit 2
+  # Build argv without eval; ${model:+...} keeps -m off when no model is given
+  # so the CLI's own default still applies.
   if command -v timeout >/dev/null 2>&1; then
-    exec timeout --foreground -k 10 "$t" opencode run --auto --format json "$1"
+    # No exec: capture timeout's rc so we can print a clear hint on 124
+    # (MAT-101 silent failure). _dispatch-run already wraps us in a subshell.
+    if [ -n "$model" ]; then
+      timeout --foreground -k 10 "$t" opencode run --auto --format json -m "$model" "$1"
+    else
+      timeout --foreground -k 10 "$t" opencode run --auto --format json "$1"
+    fi
+    local rc=$?
+    if [ "$rc" -eq 124 ]; then
+      echo "error: opencode timed out after ${t}s (OPENCODE_HEADLESS_TIMEOUT) — check the default model/provider is reachable; override with fleet dispatch --model <provider/model>; see ~/.local/share/opencode/log/opencode.log" >&2
+    fi
+    exit "$rc"
+  fi
+  if [ -n "$model" ]; then
+    exec opencode run --auto --format json -m "$model" "$1"
   fi
   exec opencode run --auto --format json "$1"
+}
+
+# Fail fast when the effective model's provider has a configured baseURL that
+# does not accept TCP. model="" means "use the config default". Exit 0 = ok
+# (or nothing to probe); exit 1 = unreachable (message already printed).
+_opencode_require_provider_reachable() {
+  local model="${1:-}"
+  OPENCODE_PROBE_MODEL="$model" \
+  OPENCODE_CONFIG="${OPENCODE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json}" \
+  python3 - <<'PY'
+import json, os, socket, sys, urllib.parse
+
+model = os.environ.get("OPENCODE_PROBE_MODEL", "").strip()
+cfg_path = os.environ.get("OPENCODE_CONFIG", "")
+cfg = {}
+try:
+    with open(cfg_path) as f:
+        cfg = json.load(f)
+except Exception:
+    sys.exit(0)  # no config → nothing to probe; let opencode decide
+
+if not model:
+    model = (cfg.get("model") or "").strip()
+if not model or "/" not in model:
+    sys.exit(0)
+
+provider_id, _, _ = model.partition("/")
+prov = (cfg.get("provider") or {}).get(provider_id) or {}
+opts = prov.get("options") or {}
+base = (opts.get("baseURL") or opts.get("baseUrl") or "").strip()
+if not base:
+    sys.exit(0)  # built-in / cloud provider — no local endpoint to probe
+
+try:
+    u = urllib.parse.urlparse(base)
+    host = u.hostname
+    port = u.port or (443 if u.scheme == "https" else 80)
+except Exception:
+    sys.exit(0)
+if not host:
+    sys.exit(0)
+
+try:
+    s = socket.create_connection((host, port), timeout=2.0)
+    s.close()
+except OSError as e:
+    print(
+        f"error: opencode provider '{provider_id}' at {base} is unreachable "
+        f"(model {model}): {e}. Fix the endpoint, or override with "
+        f"fleet dispatch --model <provider/model>.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+sys.exit(0)
+PY
 }
 
 # fleet global: opencode reads ~/.config/opencode/AGENTS.md natively (and also
