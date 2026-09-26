@@ -14,9 +14,12 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/fleet-context-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 # Isolate everything the reporter reads: FLEET_HOME (config), and HOME (so the
 # real ~/.agents/skills + ~/.claude/skills don't leak into the count).
+# Unset FLEET_CONF so an inherited conf from a parent fleet session (e.g. a
+# dispatched worker) cannot override --project against the fixture.
 export HOME="$TMP"
 export FLEET_HOME="$TMP/config"
 export FLEET_GLOBAL_AGENTS="$TMP/global-AGENTS.md"   # isolate from the real global
+unset FLEET_CONF
 mkdir -p "$FLEET_HOME/projects"
 
 pass=0 fail=0
@@ -131,6 +134,80 @@ needs changing, note it for the coordinator (do not write there).
 Do the task, run the tests, commit on this branch. Task follows.
 FRAGS
 ok "dispatch preamble fragments present in both bin/fleet and fleet-context.py"
+
+echo "[5] CONTEXT_GLOBAL_SKILLS filters machine-wide skills (MAT-21)"
+# Plant an unrelated machine-wide skill (simulates prod-access leaking into every
+# project's front-load). Hub skills must still count; the global is optional.
+mkdir -p "$HOME/.agents/skills/prod-access" "$HOME/.agents/skills/resolve-finding"
+cat > "$HOME/.agents/skills/prod-access/SKILL.md" <<'MD'
+---
+name: prod-access
+description: SoF tunnel/prod skill that must not pollute unrelated projects.
+---
+Body of prod-access — on demand only when counted.
+MD
+cat > "$HOME/.agents/skills/resolve-finding/SKILL.md" <<'MD'
+---
+name: resolve-finding
+description: Generic worker skill shared by every project.
+---
+Body of resolve-finding.
+MD
+
+# Default (unset): all globals counted — retro-compatible.
+json_all="$(ctx --json 2>/dev/null)"
+python3 - "$json_all" <<'PY'
+import json, sys
+r = json.loads(sys.argv[1])
+names = []
+for role in r["roles"].values():
+    for e in role["files"]:
+        if e.get("names"):
+            names.extend(e["names"])
+assert "prod-access" in names, "default must still count global skills: %r" % names
+assert "alpha" in names and "beta" in names
+assert r.get("context_global_skills") is None
+print("  ok   default includes prod-access + hub skills")
+PY
+[ $? -eq 0 ] && ok "default includes all globals" || bad "default filter broken"
+
+# none: drop machine-wide; hub skills remain.
+echo 'CONTEXT_GLOBAL_SKILLS="none"' >> "$FLEET_HOME/projects/x.env"
+json_none="$(ctx --json 2>/dev/null)"
+python3 - "$json_none" <<'PY'
+import json, sys
+r = json.loads(sys.argv[1])
+coord_names = []
+for e in r["roles"]["coordinator"]["files"]:
+    if e.get("names"):
+        coord_names = e["names"]
+assert "prod-access" not in coord_names, "none must drop prod-access: %r" % coord_names
+assert "resolve-finding" not in coord_names
+assert "alpha" in coord_names and "beta" in coord_names, "hub skills must remain: %r" % coord_names
+assert r.get("context_global_skills") == []
+assert any("CONTEXT_GLOBAL_SKILLS=none" in n for n in r["notes"])
+print("  ok   none keeps hub skills, drops globals")
+PY
+[ $? -eq 0 ] && ok "none drops machine-wide skills" || bad "none filter broken"
+
+# allowlist: only named globals + all hub/code skills.
+sed -i 's/^CONTEXT_GLOBAL_SKILLS=.*/CONTEXT_GLOBAL_SKILLS="resolve-finding"/' \
+  "$FLEET_HOME/projects/x.env"
+json_allow="$(ctx --json 2>/dev/null)"
+python3 - "$json_allow" <<'PY'
+import json, sys
+r = json.loads(sys.argv[1])
+coord_names = []
+for e in r["roles"]["coordinator"]["files"]:
+    if e.get("names"):
+        coord_names = e["names"]
+assert "prod-access" not in coord_names, "allowlist must drop prod-access: %r" % coord_names
+assert "resolve-finding" in coord_names, "allowlisted global missing: %r" % coord_names
+assert "alpha" in coord_names and "beta" in coord_names
+assert r.get("context_global_skills") == ["resolve-finding"]
+print("  ok   allowlist keeps resolve-finding, drops prod-access")
+PY
+[ $? -eq 0 ] && ok "allowlist keeps only named globals" || bad "allowlist filter broken"
 
 echo
 echo "context tests: $pass passed, $fail failed"

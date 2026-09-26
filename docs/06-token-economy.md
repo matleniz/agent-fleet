@@ -170,6 +170,17 @@ bodies, `docs/`, hub content). `fleet context --json` feeds a UI or an agent;
 `fleet context --budget <tokens>` exits non-zero if a role's front-load exceeds a
 ceiling (a guard for CI or a self-checking coordinator).
 
+By default the skill-description line includes every machine-wide skill under
+`~/.agents/skills` and `~/.claude/skills` (same dump most CLIs discover). That
+is fine when every global skill is relevant; it pollutes the report — and the
+`--budget` check — when a project-specific skill (e.g. a prod-access tunnel
+helper) lives next to the generic worker skills. Set **`CONTEXT_GLOBAL_SKILLS`**
+in the project `.env` to scope the measurement: unset / empty / `all` keeps the
+old behaviour (retro-compatible); `none` counts only hub/code skills; a
+space-separated name list keeps those machine-wide skills plus all hub/code
+skills. This does not change what a CLI loads at launch — it keeps the
+footprint report honest for the project. Hub and code-repo skills always count.
+
 Two things it makes concrete. First, the framework is thin: a fresh coordinator's
 fleet-authored front-load is on the order of ~1.5-2k tokens, most of it the hub
 `AGENTS.md` template you are meant to trim — everything else is on demand. Second,
