@@ -115,8 +115,12 @@ _fleet_find_by_cwd() {
 # <dir> instead — the core injects the canonical into each worktree
 # (pack_worker_setup) and the hub (cmd_hub); see the cursor pack). Optional
 # functions are NOT checked here — call sites guard them with `declare -F`.
-# pack_launch_headless <prompt> runs one task non-interactively
-# for `fleet dispatch`, with the same barrier + bypass posture as pack_launch.
+# pack_launch [mode] launches interactively: no arg = fresh; --continue =
+# resume the last real session for this cwd; --pick = CLI session picker (packs
+# without a picker fall back to continue-last); --resume is a synonym for
+# --continue. pack_launch_headless <prompt> [model] runs one task
+# non-interactively for `fleet dispatch`, with the same barrier + bypass
+# posture as pack_launch.
 # pack_barrier_files echoes the worktree-relative paths the pack writes during
 # pack_worker_setup (one per line, possibly none) — the core uses it to ignore
 # those untracked files when judging a worktree dirty (del/prune).
@@ -415,7 +419,9 @@ fleet_load_machine() {
 
 # A shell snippet that prints "count ram_mb disk_mb" for a machine:
 #   count   = live worker windows (tmux, minus each session's _home + hub windows
-#             — the coordinator's own RAM is caught by the MemAvailable floor)
+#             and finished-dispatch inspection panes renamed `_done-<name>` —
+#             those must not burn MAX_WORKERS; see cmd_dispatch_run. The
+#             coordinator's own RAM is caught by the MemAvailable floor)
 #   ram_mb  = MemAvailable, MB   ·   disk_mb = free disk on <disk-path>, MB
 # A tool that is missing or measures nothing yields 0 for that field; fleet_guard
 # treats a 0 RAM/disk reading as "unknown" and skips that floor (fail-open on a
@@ -426,7 +432,7 @@ guard_probe_snippet() {  # <session-name-regex> <disk-path>
 c=0
 if command -v tmux >/dev/null 2>&1; then
   for s in \$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -E '$sess'); do
-    w=\$(tmux list-windows -t "\$s" -F '#{window_name}' 2>/dev/null | grep -vcE '^(_home|hub)\$')
+    w=\$(tmux list-windows -t "\$s" -F '#{window_name}' 2>/dev/null | grep -vcE '^(_home|hub)$|^_done-')
     c=\$((c + w))
   done
 fi
@@ -476,7 +482,10 @@ fleet_guard() {
   {
     echo "error: [fleet-guard ${M_NAME:-?}] refused: $why"
     echo "  now: ${count} workers, ${ram}MB RAM free, ${disk}MB disk free on ${M_NAME:-?}"
-    echo "  free a slot (fleet ls / fleet wait) or override with --force / FLEET_NO_GUARD=1."
+    echo "  free a slot: fleet del <name> (drops worktree + window), or tmux kill-window"
+    echo "  on a leftover pane. Finished dispatches rename to _done-<name> and no longer"
+    echo "  count — if you still hit the cap, an interactive fleet w pane is open."
+    echo "  Override: --force / FLEET_NO_GUARD=1."
   } >&2
   return 2
 }

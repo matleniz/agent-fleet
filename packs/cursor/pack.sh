@@ -8,9 +8,12 @@
 # --force = auto-approve everything not explicitly denied — the hub deny rules
 # in .cursor/cli.json are explicit denies, so the barrier holds under it
 # (help text: "Force allow commands unless explicitly denied").
+# Modes: --continue / --pick / --resume (synonym) → agent --continue. No picker.
 pack_launch() {
   local resume=()
-  [ "${1:-}" = "--resume" ] && resume=(--continue)
+  case "${1:-}" in
+    --resume|--continue|--pick) resume=(--continue) ;;
+  esac
   exec agent --force "${resume[@]}"
 }
 

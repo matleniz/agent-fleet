@@ -11,6 +11,14 @@ Unreleased until the first one.
 ## [Unreleased]
 
 ### Fixed
+- Finished `fleet dispatch` panes no longer burn `MAX_WORKERS` slots: the window
+  is renamed `_done-<name>` after `done rc=N`, and `guard_probe` ignores
+  `^_done-`. `fleet peek <machine> <name>` still resolves the original name.
+  `fleet del` and a re-dispatch under the same name reap the `_done-` pane too
+  (no leaked panes, no duplicate names).
+  Regression: `test/dispatch.sh` layer 2. Surfaced by pack-interop dogfood
+  (cursor coordinator hit `workers 6/6` on leftover inspection shells).
+- Copilot `pack_doctor`: clearer copy when no headless token is set (MAT-22).
 - `_dispatch-run` records `done rc=N` even when the pack exits non-zero (`set -e`
   previously aborted before the status write — forever-"running", hung
   `fleet wait`). Regression: `test/dispatch.sh` layer 2c.
@@ -31,6 +39,13 @@ Unreleased until the first one.
 - `fleet-init` warns when an existing hub is missing `AGENTS.md` / `INDEX.md` (MAT-20).
 
 ### Added
+- `test/make-pack-interop.sh` — disposable non-Claude project (`AGENTS` =
+  antigravity,cursor,opencode,copilot,gemini) for cross-pack dispatch dogfood.
+- Three-way launch prompt `(c)ontinue / (r)esume picker / (n)ew` in `open_in`
+  (was binary resume/new). `pack_launch` takes `--continue` (continue-last by
+  id) or `--pick` (CLI session picker); `--resume` remains a synonym for
+  `--continue`. Claude maps `--pick` → bare `claude --resume`; other packs fall
+  back to continue-last. Tests: `test/dispatch.sh` layer 1c, `test/test-claude-resume.sh`.
 - `stub` agent pack (`packs/stub/`) — offline CI/dogfood pack; sandbox can set
   `AGENTS="stub"` without `PACK BROKEN` (MAT-18).
 - `fleet gate` — the project-declared pre-PR validation gate. A project lists

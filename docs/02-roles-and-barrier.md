@@ -126,6 +126,21 @@ does this for you: it reports each worker's commits above the base and flags a
 finished worker that produced none (`[empty: finished, no commits]`), which is the
 tell for an agent that failed its task rather than a fleet problem.
 
+After a headless worker finishes, its tmux window is renamed `_done-<name>` so it
+no longer counts toward `MAX_WORKERS` (the pane stays for `fleet peek` under the
+original name). Interactive `fleet w` panes still count until you `fleet del` /
+close them — a coordinator that opens many interactive workers without deleting
+will still hit the cap.
+
+Cross-pack dispatch is first-class: `fleet -a <pack> dispatch <name> "<task>"`
+runs the worker through that pack's `pack_launch_headless` regardless of which
+CLI the coordinator itself is. Verified 2026-09-25 on pack-interop: an
+**antigravity** (`agy`) coordinator can dispatch a **cursor** worker and a
+**cursor** coordinator can dispatch an **antigravity** worker (`done rc=0`, task
+text received). Sessions are still not portable between CLIs — switch packs by
+dispatching a new worker, and read the prior transcript via `fleet chats` if you
+need context.
+
 The coordinator has its own command — it IS the bare one: `fleet` launches (or
 resumes) the default agent in the project's hub.
 

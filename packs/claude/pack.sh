@@ -33,19 +33,35 @@ _claude_proj_slug() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
 # posture (revert to --dangerously-skip-permissions if the org lifts the policy).
 # The read-only-hub barrier (PreToolUse hook) holds in any mode. Main model is
 # chosen by hand via /model, subagents via pack_claude_subagent_model above.
+#
+# pack_launch [mode]:
+#   (none)         fresh session
+#   --continue     resume the last REAL interactive session by id (skips aborted
+#                  / background-agent transcripts); falls back to --continue
+#   --pick         hand off to Claude's interactive session picker (`claude
+#                  --resume` with no id)
+#   --resume       synonym for --continue (pre-three-way callers / tests)
 pack_launch() {
   local resume=()
-  if [ "${1:-}" = "--resume" ]; then
-    # Resume the actual last WORKING session by id, not `claude --continue`.
-    # --continue picks "most recent in cwd", but for a cwd whose sessions came
-    # from `fleet dispatch` (headless -p, which never records lastSessionId in
-    # ~/.claude.json) it falls back to a raw mtime scan — and a launch aborted at
-    # startup (bad --model, MCP error) leaves a fresh-mtime, reply-less .jsonl
-    # that then shadows the real last conversation. _claude_last_session_id skips
-    # those. Fall back to --continue only if we cannot find a real session id.
-    local sid; sid="$(_claude_last_session_id "$PWD")"
-    if [ -n "$sid" ]; then resume=(--resume "$sid"); else resume=(--continue); fi
-  fi
+  case "${1:-}" in
+    --resume|--continue)
+      # Resume the actual last WORKING session by id, not bare `claude --continue`
+      # without an id. --continue alone picks "most recent in cwd", but for a cwd
+      # whose sessions came from `fleet dispatch` (headless -p, which never records
+      # lastSessionId in ~/.claude.json) it falls back to a raw mtime scan — and a
+      # launch aborted at startup (bad --model, MCP error) leaves a fresh-mtime,
+      # reply-less .jsonl that then shadows the real last conversation.
+      # _claude_last_session_id skips those. Fall back to CLI --continue only if we
+      # cannot find a real session id.
+      local sid; sid="$(_claude_last_session_id "$PWD")"
+      if [ -n "$sid" ]; then resume=(--resume "$sid"); else resume=(--continue); fi
+      ;;
+    --pick)
+      # Interactive picker over ALL sessions (titles/search); the CLI decides
+      # which are running/background. No id guessing on our side.
+      resume=(--resume)
+      ;;
+  esac
   pack_claude_subagent_model
   fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
   _claude_mcp_flags

@@ -12,11 +12,14 @@
 # Launch opencode in the CURRENT directory (caller cd's first).
 # --auto auto-approves everything not explicitly denied — the hub edit rules
 # in opencode.json are explicit denies, so the barrier survives it.
+# Modes: --continue / --pick / --resume (synonym). No interactive picker — both
+# resume modes pin the newest session whose directory == cwd.
 pack_launch() {
   fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
-  if [ "${1:-}" = "--resume" ]; then
-    local sid
-    sid="$(opencode session list --format json 2>/dev/null | python3 -c '
+  case "${1:-}" in
+    --resume|--continue|--pick)
+      local sid
+      sid="$(opencode session list --format json 2>/dev/null | python3 -c '
 import json, os, sys
 try: sessions = json.load(sys.stdin)
 except Exception: sessions = []
@@ -25,8 +28,9 @@ for s in sessions:  # newest first
     if s.get("directory") == cwd:
         print(s["id"]); break
 ')"
-    [ -n "$sid" ] && exec opencode --auto -s "$sid"
-  fi
+      [ -n "$sid" ] && exec opencode --auto -s "$sid"
+      ;;
+  esac
   exec opencode --auto
 }
 

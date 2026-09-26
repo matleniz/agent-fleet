@@ -60,14 +60,17 @@ PY
 # truth cannot be corrupted). NOT --allow-all: that also disables path
 # verification. --continue is not reliably cwd-scoped, so resume is pinned per
 # worktree via the newest session whose cwd is $PWD.
+# Modes: --continue / --pick / --resume (synonym). No picker — --pick falls back.
 pack_launch() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
   fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
-  if [ "${1:-}" = "--resume" ]; then
-    local sid; sid="$(_cop_session_for "$PWD")"
-    [ -n "$sid" ] && _fleet_hub_ro_exec copilot --allow-all-tools "${adddir[@]}" --resume="$sid"
-  fi
+  case "${1:-}" in
+    --resume|--continue|--pick)
+      local sid; sid="$(_cop_session_for "$PWD")"
+      [ -n "$sid" ] && _fleet_hub_ro_exec copilot --allow-all-tools "${adddir[@]}" --resume="$sid"
+      ;;
+  esac
   _fleet_hub_ro_exec copilot --allow-all-tools "${adddir[@]}"
 }
 
@@ -134,7 +137,7 @@ pack_install() { echo "npm install -g @github/copilot"; }
 # `fleet dispatch` reliable. No env token -> point at both auth paths.
 pack_doctor() {
   fleet_doctor_preamble copilot "npm i -g @github/copilot" "${1:-}" || return
-  local v auth="no env token (copilot login for interactive; COPILOT_GITHUB_TOKEN for headless)"
+  local v auth="no env token (copilot login for interactive; COPILOT_GITHUB_TOKEN for headless — without it dispatch exits fast / quota errors are opaque)"
   v="$(copilot --version 2>/dev/null | head -1 | sed 's/^GitHub Copilot CLI //; s/\.$//')"
   { [ -n "${COPILOT_GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; } && auth="token in env"
   local jail="hub barrier: OS mount namespace"
