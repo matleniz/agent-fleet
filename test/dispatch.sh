@@ -95,14 +95,18 @@ echo "PASS (layer 1b): claude adds --model only when a model is given"
 # ---------- Layer 1b2: opencode honors -m from $2; unreachable baseURL fails fast ----------
 # Verified flag: `opencode run --help` → -m/--model (provider/model). Empty HOME
 # so the machine default cannot interfere; explicit $2 still gets -m.
+# Unset XDG_CONFIG_HOME / OPENCODE_CONFIG: runners (GitHub Actions) often set
+# XDG_CONFIG_HOME, and _opencode_require_provider_reachable resolves
+# ${OPENCODE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/...} — inherited XDG
+# would skip the fixture under $ophome/.config and falsely pass (rc=0).
 printf '#!/usr/bin/env bash\nprintf "%%s" "$*" > "$REC"\n' > "$stub/opencode"; chmod +x "$stub/opencode"
 ophome="$(mktemp -d)"
 : > "$REC"
-( HOME="$ophome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/opencode/pack.sh"; pack_launch_headless "task" "opencode/big-pickle" ) || true
+( unset XDG_CONFIG_HOME OPENCODE_CONFIG; HOME="$ophome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/opencode/pack.sh"; pack_launch_headless "task" "opencode/big-pickle" ) || true
 got="$(cat "$REC" 2>/dev/null || true)"
 case "$got" in *"-m opencode/big-pickle"*) ;; *) fail "opencode: -m not passed with \$2 (got: $got)";; esac
 : > "$REC"
-( HOME="$ophome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/opencode/pack.sh"; pack_launch_headless "task" ) || true
+( unset XDG_CONFIG_HOME OPENCODE_CONFIG; HOME="$ophome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/opencode/pack.sh"; pack_launch_headless "task" ) || true
 got="$(cat "$REC" 2>/dev/null || true)"
 case "$got" in *"-m "*|*"--model"*) fail "opencode: -m leaked with no \$2 (got: $got)";; *) ;; esac
 # Unreachable configured baseURL must fail before exec (MAT-101 silent-retry).
@@ -111,14 +115,14 @@ printf '%s\n' '{"provider":{"dead":{"npm":"@ai-sdk/openai-compatible","options":
   > "$ophome/.config/opencode/opencode.json"
 : > "$REC"
 set +e
-( HOME="$ophome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/opencode/pack.sh"; pack_launch_headless "task" )
+( unset XDG_CONFIG_HOME OPENCODE_CONFIG; HOME="$ophome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/opencode/pack.sh"; pack_launch_headless "task" )
 probe_rc=$?
 set -e
 [ "$probe_rc" -ne 0 ] || fail "opencode: unreachable baseURL should fail fast (rc=0)"
 [ ! -s "$REC" ] || fail "opencode: unreachable baseURL must not exec the CLI (got: $(cat "$REC"))"
 # Explicit --model for a provider WITHOUT a baseURL skips the probe and still passes -m.
 : > "$REC"
-( HOME="$ophome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/opencode/pack.sh"; pack_launch_headless "task" "opencode/big-pickle" ) || true
+( unset XDG_CONFIG_HOME OPENCODE_CONFIG; HOME="$ophome"; PATH="$stub:$PATH"; source "$ENGINE/bin/fleet-config.sh"; source "$ENGINE/packs/opencode/pack.sh"; pack_launch_headless "task" "opencode/big-pickle" ) || true
 got="$(cat "$REC" 2>/dev/null || true)"
 case "$got" in *"-m opencode/big-pickle"*) ;; *) fail "opencode: -m should bypass dead default (got: $got)";; esac
 rm -rf "$ophome"; rm -f "$stub/opencode"
