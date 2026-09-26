@@ -11,7 +11,8 @@
 #   fleet r [w <name>|hub|del <n>] shorthand for the project's remote machine
 #   fleet machines | status        the project's machines / the whole tree (--json)
 #   fleet peek/send M <win> [text] read or type into a session's terminal
-#   fleet ls | del <n> | prune     list / guarded delete / delete all merged worktrees
+#   fleet ls | del <n> | prune [--windows]  list / guarded delete / merged worktrees
+#                              (+ orphan tmux windows with prune --windows)
 #   fleet refresh [<name>]         re-run every enabled pack's worker setup
 #   fleet add-agent <pack>         enable a pack for the project (+ refresh worktrees)
 #   fleet agents | doctor          enabled packs / per-pack install+login status
@@ -69,7 +70,10 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
                        header is a reminder). Live remote sessions:
                        status --remote / peek — not this command
   del <name>           remove a worktree (refuses if uncommitted)
-  prune                remove every worktree whose branch is merged
+  prune [--windows]    remove every worktree whose branch is merged;
+                       --windows also reaps orphan tmux windows (no matching
+                       worktree, or pane path "(deleted)"). Live orphans need
+                       --force; without --windows, orphans are only reported
   refresh [<name>]     re-run enabled packs' worker setup (one worktree, or all)
   add-agent <pack>     enable a pack for this project, then refresh worktrees
   agents               enabled packs for this project (default first)
@@ -647,6 +651,10 @@ cmd_ls() {
         ;;
     esac
   done < <(git -C "$MAIN" worktree list --porcelain; echo)
+  # Orphan tmux windows (no worktree / deleted pane path) are invisible to the
+  # worktree list above — surface them so operators do not need a manual
+  # `tmux list-windows` (MAT-122).
+  report_orphan_windows
 }
 
 cmd_del() {
@@ -675,6 +683,14 @@ cmd_del() {
 
 cmd_prune() {
   need_code_repo
+  local do_windows=0
+  while :; do
+    case "${1:-}" in
+      --windows) do_windows=1; shift ;;
+      -*) echo "error: unknown prune flag '$1' (want --windows)" >&2; exit 2 ;;
+      *) break ;;
+    esac
+  done
   local base="${DEFAULT_BASE:-origin/main}"
   git -C "$MAIN" fetch origin --quiet 2>/dev/null || true
   prime_barrier_ignore
@@ -695,6 +711,14 @@ cmd_prune() {
     echo "  prune $name (merged into $base)"; pruned=$((pruned+1))
   done
   echo "[fleet] prune: $pruned removed, $kept kept."
+  # Orphan windows (worktree gone outside fleet, ad-hoc panes, deleted cwd):
+  # report by default; only kill with the explicit --windows flag. A live orphan
+  # (agent still running) additionally needs --force (MAT-122).
+  if [ "$do_windows" = 1 ]; then
+    prune_orphan_windows
+  else
+    report_orphan_windows
+  fi
 }
 
 cmd_refresh() {
@@ -970,6 +994,102 @@ reap_worker_state() {  # <worker-name>
   fi
   sdir="$(dispatch_state_dir)"
   rm -f "$sdir/$name.status" "$sdir/$name.meta"
+}
+
+# ---- orphan tmux windows (MAT-122) ----------------------------------------
+# A window in the project's local tmux session is an orphan when its pane path
+# is gone (tmux appends " (deleted)") or its name (stripping a _done- prefix)
+# matches no WT_HOME worktree. Reserved windows (hub, _home) are never orphans.
+# Grouped fv-* views share the base session's windows, so killing on
+# dispatch_tmux cleans them all. Detection is display-only until
+# `fleet prune --windows` (live orphans also need --force).
+
+fleet_reserved_window() {  # <window-name> → 0 if reserved
+  case "$1" in hub|_home) return 0 ;; esac
+  return 1
+}
+
+# Same discriminator as ensure_window_snippet: a childless shell is idle; a
+# non-shell command or a shell with children is live. No ps → assume live
+# (never kill something we cannot prove idle).
+pane_is_live() {  # <tmux-target> → 0 if live
+  local info pid cmd
+  info="$(tmux display-message -p -t "$1" '#{pane_pid} #{pane_current_command}' 2>/dev/null || true)"
+  [ -n "$info" ] || return 0
+  pid="${info%% *}"
+  cmd="${info##* }"
+  case "$cmd" in
+    bash|sh|dash|ash|zsh|ksh|fish)
+      if [ -n "$pid" ] && command -v ps >/dev/null 2>&1; then
+        if ps -o pid= --ppid "$pid" 2>/dev/null | grep -q .; then
+          return 0
+        fi
+        return 1
+      fi
+      return 0 ;;
+    *) return 0 ;;
+  esac
+}
+
+# Print orphan rows: window_id\twindow_name\tpath\tlive|idle\treason
+# reason is deleted-path or no-worktree. Empty if tmux/session missing.
+list_orphan_windows() {
+  local sess known="" wid wname path reason live logical
+  command -v tmux >/dev/null 2>&1 || return 0
+  sess="$(dispatch_tmux)"
+  tmux has-session -t "$sess" 2>/dev/null || return 0
+  known=" $(worktree_paths | while IFS= read -r p; do basename "$p"; done | tr '\n' ' ') "
+  while IFS=$'\t' read -r wid wname path; do
+    [ -n "$wname" ] || continue
+    fleet_reserved_window "$wname" && continue
+    logical="$wname"
+    case "$wname" in _done-*) logical="${wname#_done-}" ;; esac
+    reason=""
+    case "$path" in *" (deleted)") reason="deleted-path" ;; esac
+    case "$known" in
+      *" $logical "*)
+        [ -n "$reason" ] || continue  # known worktree + intact path → not orphan
+        ;;
+      *)
+        [ -n "$reason" ] || reason="no-worktree"
+        ;;
+    esac
+    if pane_is_live "$wid"; then live=live; else live=idle; fi
+    printf '%s\t%s\t%s\t%s\t%s\n' "$wid" "$wname" "$path" "$live" "$reason"
+  done < <(tmux list-windows -t "$sess" -F $'#{window_id}\t#{window_name}\t#{pane_current_path}' 2>/dev/null)
+}
+
+report_orphan_windows() {
+  local wid wname path live reason n=0
+  while IFS=$'\t' read -r wid wname path live reason; do
+    [ -n "$wname" ] || continue
+    if [ "$n" -eq 0 ]; then
+      echo
+      echo "orphan windows [$(dispatch_tmux)] (no worktree / deleted pane path) — fleet prune --windows to reap:"
+      printf '  %-18s %-8s %-14s %s\n' "WINDOW" "STATE" "REASON" "PANE PATH"
+    fi
+    n=$((n + 1))
+    printf '  %-18s %-8s %-14s %s\n' "$wname" "$live" "$reason" "$path"
+  done < <(list_orphan_windows)
+  [ "$n" -eq 0 ] || echo "  ($n orphan(s); live ones need fleet --force prune --windows)"
+}
+
+prune_orphan_windows() {
+  local wid wname path live reason logical killed=0 skipped=0 sdir
+  sdir="$(dispatch_state_dir)"
+  while IFS=$'\t' read -r wid wname path live reason; do
+    [ -n "$wname" ] || continue
+    if [ "$live" = live ] && [ -z "$force" ]; then
+      echo "  skip  $wname (live orphan — pass --force to kill)"; skipped=$((skipped + 1))
+      continue
+    fi
+    tmux kill-window -t "$wid" 2>/dev/null || true
+    logical="$wname"
+    case "$wname" in _done-*) logical="${wname#_done-}" ;; esac
+    rm -f "$sdir/$logical.status" "$sdir/$logical.meta"
+    echo "  reap  $wname ($reason, $live)"; killed=$((killed + 1))
+  done < <(list_orphan_windows)
+  echo "[fleet] prune --windows: $killed reaped, $skipped skipped (live)."
 }
 
 # Keep the append-only dispatch events.log bounded (slow unbounded growth otherwise).
@@ -1441,7 +1561,7 @@ case "$sub" in
   r)           cmd_remote "$@" ;;
   ls)          cmd_ls ;;
   del)         cmd_del "${1:-}" ;;
-  prune)       cmd_prune ;;
+  prune)       cmd_prune "$@" ;;
   refresh)     cmd_refresh "${1:-}" ;;
   add-agent)   cmd_add_agent "${1:-}" ;;
   agents)      cmd_agents ;;
