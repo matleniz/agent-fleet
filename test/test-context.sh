@@ -142,7 +142,7 @@ mkdir -p "$HOME/.agents/skills/prod-access" "$HOME/.agents/skills/resolve-findin
 cat > "$HOME/.agents/skills/prod-access/SKILL.md" <<'MD'
 ---
 name: prod-access
-description: SoF tunnel/prod skill that must not pollute unrelated projects.
+description: Project-specific prod tunnel skill that must not pollute unrelated projects.
 ---
 Body of prod-access — on demand only when counted.
 MD
