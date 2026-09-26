@@ -137,16 +137,23 @@ pack_install() { echo "curl -fsSL https://antigravity.google/cli/install.sh | ba
 # Optional: fleet doctor status line. Validates that the Google OAuth session
 # is genuinely active (not just that the token file exists, MAT-124), using a
 # lightweight time-bounded `agy models` check so expired sessions are flagged
-# before headless dispatch stalls.
+# before headless dispatch stalls. Timeout defaults to 25s, configurable via
+# AGY_DOCTOR_TIMEOUT (a slow network can take ~7s+). Exit 124 is distinguished
+# from session expiry to avoid false "session expired" alerts.
 pack_doctor() {
   fleet_doctor_preamble agy "curl -fsSL https://antigravity.google/cli/install.sh | bash" "${1:-}" || return
   local auth="no login found"
   local token="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
   if [ -e "$token" ]; then
     local tcmd=()
-    command -v timeout >/dev/null 2>&1 && tcmd=(timeout 10)
-    if "${tcmd[@]}" agy models >/dev/null 2>&1; then
+    local timeout_sec="${AGY_DOCTOR_TIMEOUT:-25}"
+    command -v timeout >/dev/null 2>&1 && tcmd=(timeout "$timeout_sec")
+    local rc=0
+    "${tcmd[@]}" agy models >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ]; then
       auth="logged in (Google OAuth)"
+    elif [ "$rc" -eq 124 ]; then
+      auth="auth check timed out (network?) — token present"
     else
       auth="session expired, run agy to log in"
     fi

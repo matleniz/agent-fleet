@@ -21,6 +21,9 @@ mkdir -p "$bin_dir" "$fake_home/.gemini/antigravity-cli"
 cat << 'EOF' > "$bin_dir/agy"
 #!/usr/bin/env bash
 if [ "${1:-}" = "models" ]; then
+  if [ -n "${MOCK_AGY_MODELS_SLEEP:-}" ]; then
+    sleep "$MOCK_AGY_MODELS_SLEEP"
+  fi
   if [ -n "${MOCK_AGY_MODELS_FAIL:-}" ]; then
     echo "Error: Please sign in to view available models." >&2
     exit 1
@@ -63,7 +66,22 @@ case "$out" in
 esac
 echo "PASS: expired session -> reports 'session expired, run agy to log in'"
 
-# 3. Token file present and valid -> "logged in (Google OAuth)"
+# 3. Token file present, but check times out -> "auth check timed out (network?) — token present"
+out="$(
+  HOME="$fake_home" PATH="$bin_dir:$PATH" AGY_DOCTOR_TIMEOUT=1 MOCK_AGY_MODELS_SLEEP=2 bash <<EOS
+set -euo pipefail
+source "$ROOT/bin/fleet-config.sh"
+source "$PACK"
+pack_doctor
+EOS
+)"
+case "$out" in
+  *"installed — auth check timed out (network?) — token present — "*) ;;
+  *) fail "expected 'auth check timed out (network?) — token present', got: $out" ;;
+esac
+echo "PASS: timeout -> reports 'auth check timed out (network?) — token present'"
+
+# 4. Token file present and valid -> "logged in (Google OAuth)"
 out="$(
   HOME="$fake_home" PATH="$bin_dir:$PATH" bash <<EOS
 set -euo pipefail
@@ -78,7 +96,7 @@ case "$out" in
 esac
 echo "PASS: valid session -> reports 'logged in (Google OAuth)'"
 
-# 4. CLI not installed -> preamble reports NOT INSTALLED
+# 5. CLI not installed -> preamble reports NOT INSTALLED
 out="$(
   HOME="$fake_home" PATH="/usr/bin:/bin" bash <<EOS || true
 set -euo pipefail
