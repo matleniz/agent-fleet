@@ -1,4 +1,8 @@
 # Dev/CI-only lint config (nothing at runtime reads it; the repo stays dep-free).
+# CI pins ruff to 0.15.22 via astral-sh/ruff-action's `version` input (see
+# .github/workflows/ci.yml) — unpinned "latest" drifted to 0.16.x and failed on
+# unchanged bin/ via new default rules. Bump the pin only with a deliberate
+# bin/ cleanup in the same change.
 # bin/fleet-assess is a Python tool with no .py extension, so `ruff check` would
 # skip it by default — include it so it is linted like the other bin/*.py tools.
 extend-include = ["**/fleet-assess"]

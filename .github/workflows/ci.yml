@@ -27,7 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Pin ruff itself (not just the action tag). Without `version`, ruff-action@v4
+      # installs latest, which floated from 0.15.22 (last green on main, 2026-07-21)
+      # to 0.16.9 and started failing on unchanged bin/ code via newly-default
+      # rules (UP031, C401, SIM115, PLW1510, ISC004, I001, BLE001, …). Keep the
+      # pin until a deliberate follow-up upgrades bin/ and bumps this together.
       - uses: astral-sh/ruff-action@v4.1.0   # self-installs ruff; reads ruff.toml (incl. bin/fleet-assess)
+        with:
+          version: "0.15.22"
 
   tests:
     runs-on: ubuntu-latest

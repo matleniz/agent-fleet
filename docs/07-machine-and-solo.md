@@ -193,18 +193,20 @@ is capped so it cannot grow without bound.
 
 `fleet`, `new-worker`, and `fleet-assess` pick the project in this order:
 
-1. `--project <name>`
-2. `$FLEET_PROJECT`
-3. **your current directory** (a project whose `CODE_REPO`, `HUB`, or `WT_HOME`
+1. `--project <name>` (always wins — including over an inherited `$FLEET_CONF`)
+2. `$FLEET_CONF` (already resolved by a parent process; child reuse only)
+3. `$FLEET_PROJECT`
+4. **your current directory** (a project whose `CODE_REPO`, `HUB`, or `WT_HOME`
    contains it — so it also works from inside a worker's worktree)
-4. otherwise an **error** listing known projects
+5. otherwise an **error** listing known projects
 
 So from inside a project's repo, `fleet w my-task` just works (and bare
-`fleet` opens the coordinator in the hub). There is
-deliberately **no implicit default project**: from an arbitrary directory you
-must name the project. A silent fallback means a command aimed at project A
-quietly lands on project B — worktrees created on the wrong repo, remote
-workers opened on the wrong VM. Fail loud instead.
+`fleet` opens the coordinator in the hub). An inherited `FLEET_CONF` from a
+parent coordinator must not silently override an explicit `--project` aimed at
+a sibling project. There is deliberately **no implicit default project**: from
+an arbitrary directory you must name the project. A silent fallback means a
+command aimed at project A quietly lands on project B — worktrees created on
+the wrong repo, remote workers opened on the wrong VM. Fail loud instead.
 
 ### Project-specific aliases
 

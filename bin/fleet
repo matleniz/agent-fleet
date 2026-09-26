@@ -17,8 +17,10 @@
 #   fleet agents | doctor          enabled packs / per-pack install+login status
 #   fleet sync-remote [M]          ship this engine to the project's VM(s) and rebuild
 #
-# Project resolved by --project / $FLEET_PROJECT / cwd (repo, hub or worktree)
-# — no implicit default. Machines are a global pool ($FLEET_HOME/machines/*.env);
+# Project resolved by --project / inherited $FLEET_CONF / $FLEET_PROJECT / cwd
+# (repo, hub or worktree) — no implicit default. Explicit --project always wins
+# over an inherited FLEET_CONF (parent coordinator env). Machines are a global
+# pool ($FLEET_HOME/machines/*.env);
 # a project selects them with MACHINES="local vm" in its .env ("local" implicit).
 # A single legacy REMOTE_HOST (+ REMOTE_CONTAINER / REMOTE_TMUX / REMOTE_PROJECT /
 # REMOTE_ENGINE_DIR) still works, synthesized as a machine named "remote".
@@ -366,12 +368,12 @@ target_machine() {  # [default-name]
 # (via in_target_window in cmd_hub/cmd_worker). Three deliberate choices:
 # (1) `unset FLEET_CONF` first: a fleet tmux SERVER holds FLEET_CONF in its
 #     global environment, so every window it spawns inherits the SERVER's
-#     project (e.g. fleet-sof's sof.env). fleet_resolve_conf prefers FLEET_CONF
-#     over --project, so without the unset the inner fleet (and the fallback
-#     shell) would resolve the wrong project. Clearing it lets --project win.
+#     project. An explicit --project already wins over that inheritance, but a
+#     bare `fleet` in the fallback shell would still honour the inherited
+#     FLEET_CONF — clearing it lets FLEET_PROJECT (below) be the soft default.
 # (2) export FLEET_PROJECT, not FLEET_CONF: the fallback shell resolves this
 #     window's project by default, yet a later `fleet --project X` typed there
-#     still wins (FLEET_PROJECT is only the default, FLEET_CONF would override).
+#     still wins (--project beats both FLEET_PROJECT and any re-exported conf).
 # (3) FLEET_IN_WINDOW stays command-scoped, NOT exported — the in-place relaunch
 #     decision is made by matching the current window (in_target_window), so
 #     `fleet <other-role>` from a fallback shell still opens the other window.
@@ -1070,9 +1072,9 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [ba
   # NOT `exec fleet`: control must return after the worker so _dispatch-run can
   # record completion + notify, and the window is kept for inspection.
   # Pin the env IN the command: a persistent tmux server keeps a stale
-  # environment that new windows inherit, and an inherited FLEET_CONF would
-  # override --project (resolution prefers FLEET_CONF), sending the worker to the
-  # wrong project. `env VAR=val` wins over whatever the server carries.
+  # environment that new windows inherit. Setting FLEET_CONF here pins the
+  # already-resolved project for the headless child (no --project on this
+  # inner line). `env VAR=val` wins over whatever the server carries.
   # FLEET_MODEL (when --model is given) rides the same way to pack_launch_headless.
   local run="env FLEET_CONF='$CONF' FLEET_HOME='$FLEET_ROOT' FLEET_PACKS_DIR='$FLEET_PACKS_DIR'${model:+ FLEET_MODEL='$model'} fleet -a $agent _dispatch-run $name $taskfile"
   tmux has-session -t "$LT" 2>/dev/null || tmux new-session -d -s "$LT" -n _home
