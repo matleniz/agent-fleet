@@ -10,10 +10,15 @@ changes nothing — a read contract like fleet-status.py.
 What counts as front-loaded (auto-read at launch): the per-user global
 instructions (~/.agents/AGENTS.md, wired by `fleet global`), the AGENTS.md/CLAUDE.md
 of the hub (coordinator) or code repo (worker), and skill *descriptions* (the
-frontmatter the CLI loads to decide triggering — NOT the bodies). Pulled on demand
-(NOT counted): the hub INDEX router, skill bodies, docs/, and hub content the agent
-navigates to. The resource guard (fleet_guard) and settings.local.json add zero
-context — the guard is a runtime bash gate, settings.local.json is harness config.
+frontmatter the CLI loads to decide triggering — NOT the bodies). Machine-wide
+skills (~/.agents/skills, ~/.claude/skills) are included by default; set
+CONTEXT_GLOBAL_SKILLS in the project .env to "none" or a name allowlist so a
+project's report (and --budget) is not polluted by unrelated globals (e.g. a
+prod-access skill on a personal dogfood project). Hub/code skills always count.
+Pulled on demand (NOT counted): the hub INDEX router, skill bodies, docs/, and
+hub content the agent navigates to. The resource guard (fleet_guard) and
+settings.local.json add zero context — the guard is a runtime bash gate,
+settings.local.json is harness config.
 
 Token counts are a rough estimate (bytes / 4); use the CLI's own `/cost` for the
 real bill. Resolution mirrors fleet-config.sh: --project, else $FLEET_CONF (which
@@ -96,33 +101,66 @@ def frontmatter(path):
     return fm
 
 
-def scan_skills(dirs):
+def global_skills_allow(env):
+    """Parse CONTEXT_GLOBAL_SKILLS from the project .env.
+
+    Controls which *machine-wide* skills (~/.agents/skills, ~/.claude/skills)
+    count in the front-load. Project/hub skills are always included.
+
+    Returns:
+      None  — include all machine-wide skills (unset / empty / "all";
+              retro-compatible default)
+      frozenset() — include none ("none")
+      frozenset({names}) — include only those named skills
+    """
+    raw = (env.get("CONTEXT_GLOBAL_SKILLS") or "").strip()
+    if not raw or raw.lower() == "all":
+        return None
+    if raw.lower() == "none":
+        return frozenset()
+    return frozenset(raw.split())
+
+
+def scan_skills(project_dirs, global_dirs, global_allow=None):
     """Deduped skills across dirs. Returns (front_bytes, body_bytes, names).
     front_bytes = name+description (what the CLI loads to trigger); body_bytes =
     full SKILL.md (loaded only on invocation). Deduped by skill NAME (a CLI loads
     a given skill once even if several dirs hold a copy, e.g. ~/.agents/skills and
     ~/.claude/skills); the first dir wins, so a project/hub override counts, not
-    the global copy — pass the more specific dirs first."""
+    the global copy — pass project_dirs before global_dirs.
+
+    project_dirs are always counted. global_dirs are filtered by global_allow
+    (None = all, frozenset = allowlist including empty = none). A skill already
+    seen from a project dir is never re-counted from a global dir, regardless of
+    the filter — the project copy won."""
     seen, front, body, names = set(), 0, 0, []
-    for d in dirs:
-        if not os.path.isdir(d):
-            continue
-        for entry in sorted(os.listdir(d)):
-            skill_md = os.path.join(d, entry, "SKILL.md")
-            if not os.path.isfile(skill_md):
+
+    def absorb(dirs, filter_names):
+        nonlocal front, body
+        for d in dirs:
+            if not os.path.isdir(d):
                 continue
-            fm = frontmatter(skill_md)
-            name = fm.get("name", entry)
-            if name in seen:
-                continue
-            seen.add(name)
-            desc = fm.get("description", "")
-            front += len((name + " " + desc).encode("utf-8"))
-            try:
-                body += os.path.getsize(skill_md)
-            except OSError:
-                pass
-            names.append(name)
+            for entry in sorted(os.listdir(d)):
+                skill_md = os.path.join(d, entry, "SKILL.md")
+                if not os.path.isfile(skill_md):
+                    continue
+                fm = frontmatter(skill_md)
+                name = fm.get("name", entry)
+                if name in seen:
+                    continue
+                seen.add(name)
+                if filter_names is not None and name not in filter_names:
+                    continue
+                desc = fm.get("description", "")
+                front += len((name + " " + desc).encode("utf-8"))
+                try:
+                    body += os.path.getsize(skill_md)
+                except OSError:
+                    pass
+                names.append(name)
+
+    absorb(project_dirs, None)
+    absorb(global_dirs, global_allow)
     return front, body, names
 
 
@@ -139,11 +177,21 @@ def dispatch_preamble(dest, name, hub):
     return p
 
 
+def home_skill_dirs():
+    home = os.path.expanduser("~")
+    return [
+        os.path.join(home, ".agents/skills"),
+        os.path.join(home, ".claude/skills"),
+    ]
+
+
 # --- roles ------------------------------------------------------------------
-def role_report(label, base_dir, files, skill_dirs):
+def role_report(label, base_dir, files, project_skill_dirs, global_allow=None):
     """Assemble one role: existing files + a skills-descriptions aggregate."""
     entries = [e for e in files if e is not None]
-    front, body, names = scan_skills(skill_dirs)
+    front, body, names = scan_skills(
+        project_skill_dirs, home_skill_dirs(), global_allow
+    )
     if names:
         entries.append(
             {
@@ -165,42 +213,36 @@ def role_report(label, base_dir, files, skill_dirs):
     }
 
 
-def coordinator_report(env):
+def coordinator_report(env, global_allow=None):
     hub = env.get("HUB", "")
     if not hub or not os.path.isdir(hub):
         return None
-    home = os.path.expanduser("~")
     files = [
         file_entry(global_file(), "global instructions"),
         file_entry(os.path.join(hub, "CLAUDE.md"), "hub bridge"),
         file_entry(os.path.join(hub, "AGENTS.md"), "hub instructions"),
     ]
-    skill_dirs = [
+    project_dirs = [
         os.path.join(hub, ".agents/skills"),
         os.path.join(hub, ".claude/skills"),
-        os.path.join(home, ".agents/skills"),
-        os.path.join(home, ".claude/skills"),
     ]
-    return role_report("coordinator", hub, files, skill_dirs)
+    return role_report("coordinator", hub, files, project_dirs, global_allow)
 
 
-def worker_report(env):
+def worker_report(env, global_allow=None):
     code = env.get("CODE_REPO", "")
     if not code:
         return None
-    home = os.path.expanduser("~")
     files = [
         file_entry(global_file(), "global instructions"),
         file_entry(os.path.join(code, "AGENTS.md"), "code instructions"),
         file_entry(os.path.join(code, "CLAUDE.md"), "code bridge"),
     ]
-    skill_dirs = [
+    project_dirs = [
         os.path.join(code, ".agents/skills"),
         os.path.join(code, ".claude/skills"),
-        os.path.join(home, ".agents/skills"),
-        os.path.join(home, ".claude/skills"),
     ]
-    rep = role_report("worker", code, files, skill_dirs)
+    rep = role_report("worker", code, files, project_dirs, global_allow)
     # Dispatched (headless) workers also get the fleet preamble prepended.
     wt = env.get("WT_HOME", "")
     dest = os.path.join(wt, "<name>") if wt else "<worktree>"
@@ -219,7 +261,7 @@ def worker_report(env):
     return rep
 
 
-def on_demand(env):
+def on_demand(env, global_allow=None):
     """Notable things pulled on demand — NOT front-loaded, shown for contrast."""
     items = []
     hub = env.get("HUB", "")
@@ -232,7 +274,9 @@ def on_demand(env):
     # hub, else the worker. A hub-less (solo/early) project still has skills sitting
     # in its code repo, and the front-loaded vs on-demand contrast is exactly the
     # point of this tool — it must not vanish just because there's no hub.
-    rep = coordinator_report(env) or worker_report(env)
+    # Same CONTEXT_GLOBAL_SKILLS filter as the front-load, so the on-demand
+    # contrast stays apples-to-apples with the counted descriptions.
+    rep = coordinator_report(env, global_allow) or worker_report(env, global_allow)
     if rep and rep.get("skill_body_bytes"):
         b = rep["skill_body_bytes"]
         items.append(
@@ -245,6 +289,28 @@ def on_demand(env):
             }
         )
     return items
+
+
+def filter_note(global_allow):
+    """Human-readable note when CONTEXT_GLOBAL_SKILLS narrows machine-wide skills."""
+    if global_allow is None:
+        return None
+    if not global_allow:
+        return (
+            "CONTEXT_GLOBAL_SKILLS=none — machine-wide ~/.agents|~/.claude skills "
+            "excluded; only hub/code skills count"
+        )
+    return (
+        "CONTEXT_GLOBAL_SKILLS allowlist — machine-wide skills limited to: %s"
+        % ", ".join(sorted(global_allow))
+    )
+
+
+def filter_json(global_allow):
+    """JSON-friendly form of the filter (null = all / unset)."""
+    if global_allow is None:
+        return None
+    return sorted(global_allow)
 
 
 # --- rendering --------------------------------------------------------------
@@ -320,26 +386,33 @@ def main():
 
     name = os.path.basename(conf)[:-4]
     env = parse_env(conf)
+    g_allow = global_skills_allow(env)
 
     roles = {}
     if role_filter in (None, "coordinator"):
-        c = coordinator_report(env)
+        c = coordinator_report(env, g_allow)
         if c:
             roles["coordinator"] = c
     if role_filter in (None, "worker"):
-        w = worker_report(env)
+        w = worker_report(env, g_allow)
         if w:
             roles["worker"] = w
+
+    notes = [
+        "the resource guard (fleet_guard/MAX_WORKERS) is a runtime bash check — 0 context",
+        "settings.local.json is harness config (barrier/hooks), never context",
+    ]
+    fn = filter_note(g_allow)
+    if fn:
+        notes.append(fn)
 
     report = {
         "project": name,
         "token_estimate": "bytes/4 (rough)",
+        "context_global_skills": filter_json(g_allow),
         "roles": roles,
-        "on_demand": on_demand(env),
-        "notes": [
-            "the resource guard (fleet_guard/MAX_WORKERS) is a runtime bash check — 0 context",
-            "settings.local.json is harness config (barrier/hooks), never context",
-        ],
+        "on_demand": on_demand(env, g_allow),
+        "notes": notes,
     }
 
     if as_json:

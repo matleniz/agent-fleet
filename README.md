@@ -157,6 +157,9 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet status --remote  # also gather VM sessions over ssh (default: local only)
    fleet context          # what an agent auto-reads at launch, per role + ~tokens
    fleet context --json --budget 3000  # machine-readable; exit non-zero if over budget
+                          #   optional CONTEXT_GLOBAL_SKILLS in the project .env
+                          #   scopes machine-wide skill descriptions (none|allowlist;
+                          #   default = all, retro-compatible; see docs/06)
    fleet gate             # run the project's declared pre-PR checks (GATE_CMDS in
                           #   its .env): auto-fixes apply mechanically, only residual
                           #   failures print; no-op if the project declares none
