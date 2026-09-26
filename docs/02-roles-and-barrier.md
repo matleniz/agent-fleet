@@ -153,7 +153,7 @@ context boundaries, write `HANDOFF.md` at the worktree root using the template i
 The incoming agent reads `HANDOFF.md` first before reading files or running tools.
 The schema is minimal, concrete, and structured across 7 fields:
 
-1. **Task**: reference / ticket identifier (e.g. `MAT-116`, `#42`) and the high-level objective.
+1. **Task**: reference / ticket identifier (e.g. `ABC-123`, `#42`) and the high-level objective.
 2. **Status & Result**: state (`completed`, `in-progress`, `blocked`, `failed`) and concrete deliverables produced.
 3. **Reason**: why the handoff is taking place (phase completed, switching to a pack with specific capabilities, context boundary reached, or blocked on external input).
 4. **Constraints**: invariants to preserve (hub read-only barrier, language/style rules, zero-external-dependency rule, untouched areas).
@@ -164,6 +164,9 @@ The schema is minimal, concrete, and structured across 7 fields:
 This eliminates context rot and token waste: the receiving agent starts with
 immediate clarity rather than burning thousands of tokens parsing raw transcripts.
 
+**Lifecycle:** `HANDOFF.md` is strictly local worktree state — it must NOT end up in
+the PR. Delete it or exclude it via `.git/info/exclude` before creating or updating the
+PR; the final summary belongs in the PR description.
 
 The coordinator has its own command — it IS the bare one: `fleet` launches (or
 resumes) the default agent in the project's hub.

@@ -6,10 +6,14 @@
 > agents in a worktree or pausing an in-progress task, write this file at the
 > worktree root (`HANDOFF.md`). The receiving agent reads it first to acquire
 > state instantly without re-reading transcripts or guessing intent.
+>
+> **Lifecycle:** `HANDOFF.md` is local working state only and must NOT be committed
+> to the PR. Delete it or exclude it via `.git/info/exclude` before opening or
+> updating the PR; the final summary belongs in the PR description.
 > See `docs/02-roles-and-barrier.md` and `docs/03-queue.md`.
 
 ## Task
-- **Ref / Ticket**: <!-- e.g. MAT-116, issue #42, or finding ID -->
+- **Ref / Ticket**: <!-- e.g. ABC-123, issue #42, or finding ID -->
 - **Objective**: <!-- What the worktree is intended to achieve, scope, expected outcome -->
 
 ## Status & Result
@@ -31,7 +35,7 @@ like IDE editing, mount-namespace isolation, or different reasoning model). -->
 <!-- Ordered, actionable steps for the receiving agent -->
 1. <!-- Next immediate step -->
 2. <!-- Follow-up step -->
-3. <!-- Final verification / PR opening -->
+3. <!-- Final verification / PR opening (delete or exclude HANDOFF.md via .git/info/exclude before PR; put final summary in PR description) -->
 
 ## Files Touched
 <!-- Modified, added, or deleted files with a short description of each change -->

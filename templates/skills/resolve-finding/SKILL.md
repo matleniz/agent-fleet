@@ -67,5 +67,6 @@ Run `fleet-queue` for this project's queue backend:
   `HANDOFF.md` at the worktree root using `templates/HANDOFF.md` (task,
   status/result, reason, constraints, next steps, files touched, how to
   verify). If starting in a worktree with an existing `HANDOFF.md`, read it first
-  to resume immediately.
-
+  to resume immediately. `HANDOFF.md` is local working state only and must NOT
+  be committed to the PR: delete it or exclude it via `.git/info/exclude` before
+  opening the PR; the final summary belongs in the PR description.

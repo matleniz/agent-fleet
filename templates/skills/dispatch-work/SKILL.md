@@ -85,4 +85,3 @@ Partition by the FILES each stream writes, not by the steps of the pipeline.
 - Cross-pack handoffs: when switching an in-progress worktree from one agent CLI
   to another, ensure `HANDOFF.md` (from `templates/HANDOFF.md`) is written in the
   worktree so the receiving agent picks up the state cleanly.
-
