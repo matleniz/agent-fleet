@@ -134,11 +134,23 @@ pack_worker_setup() {
 # Install line for the VM image / a fresh machine (auth: Google OAuth in TUI).
 pack_install() { echo "curl -fsSL https://antigravity.google/cli/install.sh | bash"; }
 
-# Optional: fleet doctor status line.
+# Optional: fleet doctor status line. Validates that the Google OAuth session
+# is genuinely active (not just that the token file exists, MAT-124), using a
+# lightweight time-bounded `agy models` check so expired sessions are flagged
+# before headless dispatch stalls.
 pack_doctor() {
   fleet_doctor_preamble agy "curl -fsSL https://antigravity.google/cli/install.sh | bash" "${1:-}" || return
   local auth="no login found"
-  [ -e "$HOME/.gemini/antigravity-cli/antigravity-oauth-token" ] && auth="logged in (Google OAuth)"
+  local token="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+  if [ -e "$token" ]; then
+    local tcmd=()
+    command -v timeout >/dev/null 2>&1 && tcmd=(timeout 10)
+    if "${tcmd[@]}" agy models >/dev/null 2>&1; then
+      auth="logged in (Google OAuth)"
+    else
+      auth="session expired, run agy to log in"
+    fi
+  fi
   local jail="hub barrier: OS mount namespace"
   _fleet_userns_ro_ok || jail="hub barrier: UNAVAILABLE (no unprivileged userns — hub-less projects only)"
   echo "installed — $auth — $jail"
