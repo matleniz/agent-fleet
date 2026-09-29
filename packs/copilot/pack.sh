@@ -2,7 +2,7 @@
 # copilot pack — GitHub Copilot CLI (@github/copilot).
 # Sourced by fleet_load_pack; must define the six required pack_* functions
 # (pack_doctor is optional, used by `fleet doctor`).
-# Verified against GitHub Copilot CLI 1.0.70 (bundled --help + a live barrier
+# Verified against GitHub Copilot CLI 1.0.88 (bundled --help + a live barrier
 # proof; sessions under ~/.copilot/session-state/<id>/workspace.yaml).
 #
 # LIMIT: Copilot CLI has no per-path write-deny. Its tool-permission `write`
@@ -54,6 +54,68 @@ print(best_id)
 PY
 }
 
+# Returns the name of the first available headless token env var, or empty if none.
+# Precedence follows Copilot CLI docs: COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN.
+_cop_headless_token() {
+  if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
+    echo "COPILOT_GITHUB_TOKEN"
+  elif [ -n "${GH_TOKEN:-}" ]; then
+    echo "GH_TOKEN"
+  elif [ -n "${GITHUB_TOKEN:-}" ]; then
+    echo "GITHUB_TOKEN"
+  fi
+}
+
+# True iff interactive credentials exist (managed config.json or gh CLI token).
+_cop_has_interactive_login() {
+  local conf="${COPILOT_HOME:-$HOME/.copilot}/config.json"
+  if [ -f "$conf" ]; then
+    python3 - "$conf" <<'PY' 2>/dev/null && return 0
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        clean = "".join(line for line in f if not line.strip().startswith("//"))
+        d = json.loads(clean)
+        if d.get("copilotTokens") or d.get("loggedInUsers"):
+            sys.exit(0)
+except Exception:
+    pass
+sys.exit(1)
+PY
+  fi
+  if command -v gh >/dev/null 2>&1 && gh auth token >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+# True iff recent Copilot logs (last 24h by default) contain a quota-exceeded error.
+_cop_recent_quota_error() {
+  local logdir="${COPILOT_HOME:-$HOME/.copilot}/logs"
+  [ -d "$logdir" ] || return 1
+  python3 - "$logdir" <<'PY'
+import glob, os, sys, time
+logdir = sys.argv[1]
+try:
+    logs = sorted(glob.glob(os.path.join(logdir, "process-*.log")), key=os.path.getmtime, reverse=True)
+except OSError:
+    sys.exit(1)
+now = time.time()
+window = int(os.environ.get("COPILOT_QUOTA_WINDOW_SEC", "86400"))
+for log in logs[:10]:
+    try:
+        if now - os.path.getmtime(log) > window:
+            break
+        with open(log, errors="ignore") as f:
+            c = f.read()
+            if "exceeded your monthly quota" in c or "402 You have exceeded" in c:
+                sys.exit(0)
+    except OSError:
+        pass
+sys.exit(1)
+PY
+}
+
 # Launch Copilot in the CURRENT directory (caller cd's first), through the
 # mount-namespace jail (hub read-only, kernel-enforced) — that is what makes
 # --allow-all-tools acceptable here (blast radius is the worktree; the shared
@@ -65,6 +127,9 @@ pack_launch() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
   fleet_node_heap_guard   # V8 heap cap (anti-crash): OOM-kill a leaking worker cleanly
+  if _cop_recent_quota_error; then
+    echo "warning: copilot monthly quota exceeded in recent logs (check GitHub billing)" >&2
+  fi
   case "${1:-}" in
     --resume|--continue|--pick)
       local sid; sid="$(_cop_session_for "$PWD")"
@@ -76,10 +141,15 @@ pack_launch() {
 
 # Headless launch for `fleet dispatch`: one task non-interactively, through the
 # same jail. --allow-all-tools is required for non-interactive mode (per --help).
+# Fails early if a monthly quota exceeded error is present in recent logs.
 pack_launch_headless() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
   fleet_node_heap_guard
+  if [ "${FLEET_COPILOT_IGNORE_QUOTA:-0}" != 1 ] && _cop_recent_quota_error; then
+    echo "error: copilot monthly quota exceeded (check GitHub billing; quota error in recent logs)" >&2
+    return 1
+  fi
   _fleet_hub_ro_exec copilot -p "$1" --allow-all-tools "${adddir[@]}"
 }
 
@@ -131,16 +201,24 @@ pack_global_setup() {
 pack_install() { echo "npm install -g @github/copilot"; }
 
 # Optional: fleet doctor status line.
-# Copilot does not persist a credential file we can read (a device-flow login
-# lands in the OS keychain, or falls back to plaintext / the gh CLI token), so we
-# report the fleet-relevant signal instead: an env token is what makes headless
-# `fleet dispatch` reliable. No env token -> point at both auth paths.
+# Reports CLI version, auth status (headless env token vs interactive login),
+# quota status (detected from recent Copilot logs), and hub barrier jail.
 pack_doctor() {
   fleet_doctor_preamble copilot "npm i -g @github/copilot" "${1:-}" || return
-  local v auth="no env token (copilot login for interactive; COPILOT_GITHUB_TOKEN for headless — without it dispatch exits fast / quota errors are opaque)"
+  local v auth quota=""
   v="$(copilot --version 2>/dev/null | head -1 | sed 's/^GitHub Copilot CLI //; s/\.$//')"
-  { [ -n "${COPILOT_GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; } && auth="token in env"
+  local tok; tok="$(_cop_headless_token)"
+  if [ -n "$tok" ]; then
+    auth="token in env ($tok)"
+  elif _cop_has_interactive_login; then
+    auth="interactive login (no env token — export COPILOT_GITHUB_TOKEN for headless dispatch)"
+  else
+    auth="no login found (copilot login for interactive; COPILOT_GITHUB_TOKEN for headless)"
+  fi
+  if _cop_recent_quota_error; then
+    quota="quota exceeded (check GitHub billing; see ~/.copilot/logs)"
+  fi
   local jail="hub barrier: OS mount namespace"
   _fleet_userns_ro_ok || jail="hub barrier: UNAVAILABLE (no unprivileged userns — hub-less projects only)"
-  echo "installed ($v) — $auth — $jail"
+  echo "installed ($v) — $auth${quota:+ — $quota} — $jail"
 }
