@@ -111,7 +111,9 @@ rule above: cloud has no prod keys).
 `FEEDBACK_MODEL_DISTILL` (C, strong), `FEEDBACK_RUNNER` (local | ssh | cloud). No
 `bin/` script calls a model — the model is passed on the existing
 `pack_launch_headless <prompt> <model>` path. Built-ins: `haiku` / `sonnet` /
-`local`.
+`local`. Caveat: on the claude pack, `haiku` cannot run headless
+(auto mode is unavailable on Haiku; the pack fails fast) — set a sonnet model or another
+pack's cheap model for a claude-run pass.
 
 **Scheduling is two jobs, both instance-side** (not repo code): B frequent (its
 value is only realized if C is notably rarer), C rarer. Install each as a local
