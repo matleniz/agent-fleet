@@ -219,6 +219,31 @@ reaps any leftover `<name>` / `_done-<name>` window and dispatch sidecars.
 Reserved `hub` / `_home` windows are never orphans. Grouped `fv-*` views share
 the base session's windows, so one kill cleans them all.
 
+### Worker health, stall detection, and watchdog supervision
+
+Headless workers (`fleet dispatch`) run unattended. When an agent CLI gets wedged
+(retrying on a dropped connection, waiting for interactive stdin in headless mode,
+or running a blocking foreground dev server without progressing), coordinators
+monitoring the fleet need an automated signal rather than hanging indefinitely.
+
+`WORKER_STALL_MINUTES` (default `20`; `0` = off) defines the progress threshold:
+- **Progress signal:** measured from actual worktree activity — recent commits,
+  `.git/index` updates, and dirty file modifications (filtering barrier files),
+  anchored at dispatch created and status timestamp. Tmux pane chatter alone does
+  *not* reset the clock.
+- **Reporting:** `fleet ls` surfaces stalled workers as `[dispatch: running (stalled)]`.
+  `fleet status` displays `(running (stalled))` in text and exposes `stalled: true`,
+  `last_activity` (ISO-8601 UTC), `activity_age_sec`, and `stall_threshold_sec` in `--json`.
+- **Coordinator wake-up:** `fleet wait [<name>]` stops waiting as soon as a target
+  worker stalls and exits with return code `3` (distinct from `0` on clean finish and `1`
+  on worker error), allowing supervisors and dispatch scripts to trigger recovery or
+  fallback workflows instead of blocking forever.
+- **Progress recovery:** any file modification or git commit in the worker worktree
+  immediately resets the activity age and clears the stalled flag.
+
+Override `WORKER_STALL_MINUTES` per project in its `.env` or globally in `default.env`.
+Set `WORKER_STALL_MINUTES=0` to disable stall detection.
+
 ### How the active project is resolved
 
 `fleet`, `new-worker`, and `fleet-assess` pick the project in this order:

@@ -24,7 +24,12 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from fleet_common import assert_not_legacy, barrier_files, parse_env  # noqa: E402
+from fleet_common import (  # noqa: E402
+    assert_not_legacy,
+    barrier_files,
+    parse_env,
+    worker_stall_info,
+)
 
 ROOT = os.environ.get("FLEET_HOME") or os.path.expanduser("~/.config/fleet")
 assert_not_legacy(ROOT)
@@ -40,9 +45,11 @@ DEFAULT_ENV = os.path.join(ROOT, "default.env")
 BARRIER = barrier_files()
 
 
-def run(args, cwd=None):
+def run(args, cwd=None, env=None):
     try:
-        out = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=15)
+        out = subprocess.run(
+            args, cwd=cwd, env=env, capture_output=True, text=True, timeout=15
+        )
         return out.stdout if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -169,7 +176,8 @@ def worktrees(code_repo, wt_home):
 
 
 def uncommitted(path):
-    out = run(["git", "-C", path, "status", "--porcelain", "-uall"])
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    out = run(["git", "-C", path, "status", "--porcelain", "-uall"], env=env)
     for line in out.splitlines():
         if line.startswith("?? ") and line[3:] in BARRIER:
             continue  # ignore the untracked barrier files the packs wrote
@@ -303,6 +311,20 @@ def local_sessions(env, proj, tmux):
             mode = meta.get("mode") or (
                 "dispatch" if name in statuses else "interactive"
             )
+            status_val = statuses.get(name)
+            status_file = os.path.join(sdir, name + ".status")
+            status_mtime = (
+                os.path.getmtime(status_file)
+                if os.path.isfile(status_file)
+                else None
+            )
+            stall = worker_stall_info(
+                t["path"],
+                status_val,
+                created=meta.get("created"),
+                status_mtime=status_mtime,
+                env=env,
+            )
             workers.append(
                 {
                     "name": name,
@@ -313,8 +335,12 @@ def local_sessions(env, proj, tmux):
                     "present": name in windows,
                     "mode": mode,
                     "parent": meta.get("parent") or None,
-                    "dispatch_status": statuses.get(name),
+                    "dispatch_status": status_val,
                     "created": meta.get("created") or None,
+                    "last_activity": stall["last_activity"],
+                    "activity_age_sec": stall["activity_age_sec"],
+                    "stall_threshold_sec": stall["stall_threshold_sec"],
+                    "stalled": stall["stalled"],
                 }
             )
 
@@ -325,8 +351,7 @@ def local_sessions(env, proj, tmux):
             "present": "hub" in windows,
             "hub": env.get("HUB") or None,
         }
-    # Additive field (MAT-122): windows invisible to the worktree-derived
-    # workers list. MAT-125 may extend the status surface — keep this local.
+    # Additive field: windows invisible to the worktree-derived workers list.
     orphans = orphan_windows(details, worker_names) if details else []
     return {"coordinator": coordinator, "workers": workers, "orphans": orphans}
 
@@ -390,6 +415,8 @@ def render_text(tree):
             for group, label in ((deps, "dispatched"), (indep, "independent")):
                 for w in group:
                     st = w["dispatch_status"] or ("live" if w["present"] else "idle")
+                    if w.get("stalled"):
+                        st = "%s (stalled)" % st
                     ca = w["commits_ahead"]
                     deliver = "" if ca is None else " %dc" % ca
                     dirty = " +uncommitted" if w["uncommitted"] else ""
