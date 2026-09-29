@@ -28,7 +28,6 @@ Enforces:
 """
 
 import argparse
-import glob
 import json
 import os
 import re
@@ -41,12 +40,13 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from fleet_common import assert_not_legacy, parse_env  # noqa: E402
 
 DEFAULT_ROUTE_CONF = {
-    "ROUTE_EASY": "gemini opencode:haiku antigravity copilot",
-    "ROUTE_MEDIUM": "gemini opencode antigravity copilot cursor",
-    "ROUTE_HARD": "gemini opencode antigravity copilot cursor claude:sonnet",
+    "ROUTE_EASY": "antigravity cursor copilot",
+    "ROUTE_MEDIUM": "antigravity cursor copilot",
+    "ROUTE_HARD": "antigravity cursor copilot claude:sonnet",
     "ROUTE_ESCALATE": "claude:sonnet claude:opus",
     "ROUTE_CLAUDE": "escalate-only",
     "ROUTE_MAX_DEPTH": "2",
+    "ROUTE_QUOTA_TTL_SEC": "21600",
     "ROUTE_SCORER": "",
 }
 
@@ -65,48 +65,101 @@ def check_userns_ok():
         return False
 
 
-def is_copilot_quota_exceeded():
-    """True iff recent Copilot logs indicate monthly quota exceeded."""
-    logdir = os.path.expanduser("~/.copilot/logs")
-    if not os.path.isdir(logdir):
+def pack_requires_userns(pack, packs_dir):
+    """True iff pack requires userns mount namespace for hub isolation."""
+    pack_sh = os.path.join(packs_dir, pack, "pack.sh")
+    if not os.path.isfile(pack_sh):
         return False
     try:
-        logs = sorted(
-            glob.glob(os.path.join(logdir, "process-*.log")),
-            key=os.path.getmtime,
-            reverse=True,
-        )
+        with open(pack_sh, errors="ignore") as f:
+            c = f.read()
+            return "pack_requires_userns" in c or "hub-mount-ns.sh" in c
     except OSError:
         return False
-    now = time.time()
-    window = int(os.environ.get("COPILOT_QUOTA_WINDOW_SEC", "86400"))
-    for log in logs[:10]:
-        try:
-            if now - os.path.getmtime(log) > window:
-                break
-            with open(log, errors="ignore") as f:
-                c = f.read()
-                if "exceeded your monthly quota" in c or "402 You have exceeded" in c:
-                    return True
-        except OSError:
-            pass
-    return False
 
 
-def is_pack_quota_exceeded(pack, conf, manual_exceeded):
-    """Check if a pack is out of quota."""
+def parse_expiry(raw):
+    """Parse integer epoch or ISO timestamp string into epoch float."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    try:
+        import datetime
+        if len(raw) == 10 and raw.count("-") == 2:
+            raw += "T23:59:59Z"
+        dt = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def get_pack_quota_expiry(pack, root):
+    """Return active quota expiration epoch for pack from ledger, or None."""
+    ledger = os.path.join(root, "quota", pack)
+    if not os.path.isfile(ledger):
+        return None
+    try:
+        with open(ledger) as f:
+            content = f.read().strip()
+        if not content:
+            mtime = os.path.getmtime(ledger)
+            return mtime + 21600
+        return parse_expiry(content)
+    except Exception:
+        return None
+
+
+def is_pack_quota_active(pack, root, conf, manual_exceeded, now=None):
+    """Check if a pack is out of quota via ledger or config."""
     if pack in manual_exceeded:
-        return True
+        return True, "manual/cli"
     pack_upper = pack.upper().replace("-", "_")
     if conf.get(f"FLEET_QUOTA_EXCEEDED_{pack_upper}") == "1":
-        return True
+        return True, f"FLEET_QUOTA_EXCEEDED_{pack_upper}=1"
     if conf.get(f"FLEET_QUOTA_{pack_upper}") == "0":
-        return True
-    if pack == "copilot" and is_copilot_quota_exceeded():
-        return True
-    if pack == "cursor" and os.path.exists(os.path.expanduser("~/.cursor/quota_exceeded")):
-        return True
-    return False
+        return True, f"FLEET_QUOTA_{pack_upper}=0"
+
+    if now is None:
+        now = time.time()
+    exp = get_pack_quota_expiry(pack, root)
+    if exp is not None:
+        if exp > now:
+            iso_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(exp))
+            return True, f"ledger active until {iso_str}"
+        else:
+            try:
+                os.remove(os.path.join(root, "quota", pack))
+            except OSError:
+                pass
+    return False, None
+
+
+def record_quota_exceeded(pack_arg, root, conf):
+    """Write pack quota expiry to $root/quota/<pack>."""
+    if ":" in pack_arg:
+        pack, val = pack_arg.split(":", 1)
+        exp = parse_expiry(val)
+        if exp is None:
+            try:
+                ttl = int(val)
+                exp = int(time.time() + ttl)
+            except ValueError:
+                exp = int(time.time() + int(conf.get("ROUTE_QUOTA_TTL_SEC", 21600)))
+    else:
+        pack = pack_arg
+        ttl = int(conf.get("ROUTE_QUOTA_TTL_SEC", 21600))
+        exp = int(time.time() + ttl)
+
+    qdir = os.path.join(root, "quota")
+    os.makedirs(qdir, exist_ok=True)
+    ledger = os.path.join(qdir, pack)
+    with open(ledger, "w") as f:
+        f.write(f"{int(exp)}\n")
+    return pack, exp
 
 
 def resolve_conf(proj=None):
@@ -139,7 +192,13 @@ def resolve_conf(proj=None):
         if k.startswith("ROUTE_") or k.startswith("FLEET_QUOTA_") or k in ("AGENTS", "HUB", "FLEET_DISPATCH_DEPTH"):
             conf[k] = v
 
-    return conf, root
+    proj_name = proj or os.environ.get("FLEET_PROJECT") or ""
+    if not proj_name and proj_file:
+        base = os.path.basename(proj_file)
+        if base.endswith(".env"):
+            proj_name = base[:-4]
+
+    return conf, root, proj_name
 
 
 def parse_candidates(list_str):
@@ -243,7 +302,7 @@ def main():
 
     args = parser.parse_args()
 
-    conf, _ = resolve_conf(args.project)
+    conf, root, proj_name = resolve_conf(args.project)
 
     # Recursion depth check
     try:
@@ -255,6 +314,27 @@ def main():
     if current_depth >= max_depth:
         sys.stderr.write(f"error: max dispatch depth ({max_depth}) reached (current={current_depth})\n")
         sys.exit(2)
+
+    # Quota exceeded packs handling
+    manual_exceeded = set()
+    for q in args.quota_exceeded:
+        for item in re.split(r"[,\s]+", q):
+            if item.strip():
+                p, exp = record_quota_exceeded(item.strip(), root, conf)
+                manual_exceeded.add(p)
+    for item in re.split(r"[,\s]+", conf.get("ROUTE_QUOTA_EXCEEDED", "")):
+        if item.strip():
+            manual_exceeded.add(item.strip())
+
+    # Standalone --quota-exceeded invocation: mark ledger and exit
+    if args.quota_exceeded and not (
+        args.difficulty or args.kind or args.escalate or args.task or args.task_file
+    ):
+        for p in manual_exceeded:
+            exp = get_pack_quota_expiry(p, root)
+            exp_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(exp)) if exp else "active"
+            print(f"[fleet] marked quota exceeded for pack '{p}' until {exp_str} ({os.path.join(root, 'quota', p)})")
+        sys.exit(0)
 
     # Resolve task text if provided
     task_text = args.task or ""
@@ -305,16 +385,9 @@ def main():
     enabled_agents = set(conf.get("AGENTS", "claude").split())
     claude_policy = conf.get("ROUTE_CLAUDE", "escalate-only").strip().lower()
 
-    # Quota exceeded packs
-    manual_exceeded = set()
-    for q in args.quota_exceeded:
-        for item in re.split(r"[,\s]+", q):
-            if item.strip():
-                manual_exceeded.add(item.strip())
-    for item in re.split(r"[,\s]+", conf.get("ROUTE_QUOTA_EXCEEDED", "")):
-        if item.strip():
-            manual_exceeded.add(item.strip())
-
+    packs_dir = os.environ.get("FLEET_PACKS_DIR") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "packs"
+    )
     has_hub = bool(conf.get("HUB"))
     userns_ok = check_userns_ok() if has_hub else True
 
@@ -335,14 +408,24 @@ def main():
                     sys.stderr.write("skip claude: ROUTE_CLAUDE=escalate-only and not escalating\n")
                 continue
 
-        if has_hub and pack in ("antigravity", "copilot") and not userns_ok:
+        if has_hub and pack_requires_userns(pack, packs_dir) and not userns_ok:
             if args.explain:
                 sys.stderr.write(f"skip {pack}: userns mount namespace unavailable for hub project\n")
             continue
 
-        if is_pack_quota_exceeded(pack, conf, manual_exceeded):
-            if args.explain:
-                sys.stderr.write(f"skip {pack}: quota exceeded, falling through\n")
+        quota_active, quota_reason = is_pack_quota_active(pack, root, conf, manual_exceeded)
+        if quota_active:
+            sys.stderr.write(f"skip {pack}: quota exceeded ({quota_reason}), falling through\n")
+            if proj_name:
+                sdir = os.path.join(root, "dispatch", proj_name)
+                if os.path.isdir(sdir):
+                    try:
+                        events_log = os.path.join(sdir, "events.log")
+                        now_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        with open(events_log, "a") as f:
+                            f.write(f"{now_str} route-skip-quota pack={pack} reason={quota_reason}\n")
+                    except OSError:
+                        pass
             continue
 
         selected = (pack, model)

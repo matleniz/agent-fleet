@@ -1364,16 +1364,44 @@ cmd_dispatch_run() {  # internal: foreground headless launch inside a tmux windo
   # CRITICAL: this file runs under `set -e`. A bare failing subshell aborts before
   # `rc=$?` and the status write — coordinators then see forever-"running" and
   # `fleet wait` hangs (MAT-13). Disable -e around the launch; restore after.
+  local out_file; out_file="$(mktemp)"
   set +e
   ( pack_launch_headless "$preamble
 
-$task" "${FLEET_MODEL:-}" )
-  local rc=$?
+$task" "${FLEET_MODEL:-}" ) 2>&1 | tee "$out_file"
+  local rc="${PIPESTATUS[0]}"
   set -e
   local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
   printf 'done rc=%s' "$rc" > "$sdir/$name.status"
   printf '%s %s done rc=%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$rc" >> "$sdir/events.log"
   rotate_events_log "$sdir/events.log"   # keep the append-only history bounded
+
+  if [ "$rc" -ne 0 ]; then
+    local quota_pat=""
+    if declare -F pack_quota_pattern >/dev/null 2>&1; then
+      quota_pat="$(pack_quota_pattern 2>/dev/null || true)"
+    fi
+    local quota_matched=0
+    if [ -n "$quota_pat" ]; then
+      if grep -q -E "$quota_pat" "$out_file" 2>/dev/null; then
+        quota_matched=1
+      elif [ -n "${TMUX_PANE:-}" ] && tmux capture-pane -p -t "$TMUX_PANE" 2>/dev/null | grep -q -E "$quota_pat"; then
+        quota_matched=1
+      fi
+    fi
+    if [ "$quota_matched" -eq 1 ]; then
+      local ttl="${ROUTE_QUOTA_TTL_SEC:-${FLEET_DEF_ROUTE_QUOTA_TTL_SEC:-21600}}"
+      local now_epoch exp_epoch
+      now_epoch="$(date +%s)"
+      exp_epoch="$((now_epoch + ttl))"
+      mkdir -p "$FLEET_ROOT/quota"
+      printf '%s\n' "$exp_epoch" > "$FLEET_ROOT/quota/$agent"
+      echo "[fleet] pack '$agent' quota exceeded (pattern '$quota_pat' matched) — recorded in $FLEET_ROOT/quota/$agent (expires in ${ttl}s)" >&2
+      printf '%s %s quota-exceeded pack=%s expires=%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$agent" "$exp_epoch" >> "$sdir/events.log"
+      rotate_events_log "$sdir/events.log"
+    fi
+  fi
+  rm -f "$out_file"
   # Human's phone ping (best effort), same channel as the pack Stop hooks.
   [ -n "${NTFY_TOPIC:-}" ] && "$NOTIFY" "$NTFY_TOPIC" "$name" "done rc=$rc" >/dev/null 2>&1
   echo "[fleet] worker '$name' finished (rc=$rc) — recorded for the coordinator (fleet ls / fleet wait)"

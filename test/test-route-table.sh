@@ -29,12 +29,13 @@ cd "$ROOT/code" || exit 1
 echo "[1] default routing -> medium preference"
 out="$("$FLEET" --project sandbox route)"
 # sandbox AGENTS="stub claude gemini opencode cursor"
-# Default ROUTE_MEDIUM="gemini opencode antigravity copilot cursor"
-eq "default route picks gemini" "$out" "gemini"
+# Default ROUTE_MEDIUM="antigravity cursor copilot"
+# antigravity not in AGENTS -> picks cursor
+eq "default route picks cursor" "$out" "cursor"
 
 echo "[2] explicit difficulty"
 out_easy="$("$FLEET" --project sandbox route --difficulty easy)"
-eq "easy route picks gemini" "$out_easy" "gemini"
+eq "easy route picks cursor" "$out_easy" "cursor"
 
 echo "[3] kind-specific override"
 echo 'ROUTE_KIND_DOC="opencode:haiku gemini"' >> "$conf"
@@ -61,9 +62,10 @@ out_never="$(ROUTE_CLAUDE=never "$FLEET" --project sandbox route --escalate)"
 eq "ROUTE_CLAUDE=never falls through to opencode" "$out_never" "opencode"
 
 echo "[8] quota error falls through to next candidate"
-# ROUTE_EASY="gemini opencode:haiku antigravity copilot"
-out_quota="$("$FLEET" --project sandbox route --difficulty easy --quota-exceeded gemini)"
-eq "quota exceeded gemini falls through to opencode:haiku" "$out_quota" "opencode:haiku"
+echo 'ROUTE_EASY="cursor opencode"' >> "$conf"
+out_quota="$("$FLEET" --project sandbox route --difficulty easy --quota-exceeded cursor)"
+eq "quota exceeded cursor falls through to opencode" "$out_quota" "opencode"
+[ -f "$FLEET_HOME/quota/cursor" ] || bad "ledger $FLEET_HOME/quota/cursor missing"
 
 echo "[9] recursion depth limit prevents runaway dispatch"
 set +e
@@ -76,7 +78,7 @@ has "max depth error message" "max dispatch depth" "$depth_out"
 echo "[10] JSON output format"
 json_out="$("$FLEET" --project sandbox route --difficulty easy --json)"
 target="$(python3 -c "import json, sys; print(json.loads(sys.stdin.read())['target'])" <<<"$json_out")"
-eq "json target parsed" "$target" "gemini"
+eq "json target parsed" "$target" "opencode"
 
 echo "[11] dispatch --auto uses route and logs event"
 # Dispatch stub worker via auto routing

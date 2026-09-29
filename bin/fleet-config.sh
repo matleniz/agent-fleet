@@ -77,17 +77,19 @@ FLEET_DEF_WORKER_STALL_MINUTES=20
 # ~/.config/fleet/routing.env, default.env, or a project .env. Read by bin/fleet
 # and bin/fleet-route.py (same process/subprocesses), invisible to shellcheck here.
 # shellcheck disable=SC2034
-FLEET_DEF_ROUTE_EASY="gemini opencode:haiku antigravity copilot"
+FLEET_DEF_ROUTE_EASY="antigravity cursor copilot"
 # shellcheck disable=SC2034
-FLEET_DEF_ROUTE_MEDIUM="gemini opencode antigravity copilot cursor"
+FLEET_DEF_ROUTE_MEDIUM="antigravity cursor copilot"
 # shellcheck disable=SC2034
-FLEET_DEF_ROUTE_HARD="gemini opencode antigravity copilot cursor claude:sonnet"
+FLEET_DEF_ROUTE_HARD="antigravity cursor copilot claude:sonnet"
 # shellcheck disable=SC2034
 FLEET_DEF_ROUTE_ESCALATE="claude:sonnet claude:opus"
 # shellcheck disable=SC2034
 FLEET_DEF_ROUTE_CLAUDE="escalate-only"
 # shellcheck disable=SC2034
 FLEET_DEF_ROUTE_MAX_DEPTH=2
+# shellcheck disable=SC2034
+FLEET_DEF_ROUTE_QUOTA_TTL_SEC=21600
 
 # conversation-feedback routine (docs/04) — model + runner knobs. The routine is a
 # 3-stage pipeline: A extract (deterministic, no model), B compress (small model,
