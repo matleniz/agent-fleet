@@ -149,6 +149,10 @@ pack_launch() {
 # Headless launch for `fleet dispatch`: one task non-interactively, through the
 # same jail. --allow-all-tools is required for non-interactive mode (per --help).
 # Fails early if a monthly quota exceeded error is present in recent logs.
+# $2 (optional): model, from `fleet dispatch --model` (`--model <model>`, verified
+# in copilot --help; `auto` lets Copilot pick).
+# shellcheck disable=SC2034  # read by fleet_model_args / fleet_pack_honors_model (bin/fleet-config.sh)
+PACK_MODEL_FLAG=--model
 pack_launch_headless() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
@@ -157,7 +161,8 @@ pack_launch_headless() {
     echo "error: copilot monthly quota exceeded (check GitHub billing; quota error in recent logs)" >&2
     return 1
   fi
-  _fleet_hub_ro_exec copilot -p "$1" --allow-all-tools "${adddir[@]}"
+  fleet_model_args "${2:-}"
+  _fleet_hub_ro_exec copilot -p "$1" --allow-all-tools "${adddir[@]}" "${FLEET_MODEL_ARGS[@]}"
 }
 
 # pack_worker_setup writes nothing: the barrier is a launch-time mount namespace

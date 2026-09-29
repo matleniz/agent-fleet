@@ -49,6 +49,7 @@ fleet_pass() {
   [ -f "$FLEET_PACKS_DIR/$pack/pack.sh" ] || { echo "pass($kind): unknown pack '$pack'" >&2; return 3; }
   PASS_TARGET="$target"
   echo "pass($kind): headless run via $target" >&2
+  ( fleet_load_pack "$pack"; fleet_warn_model_ignored "$pack" "$model" )
 
   local timeout_s="${PASS_TIMEOUT:-${FLEET_DEF_PASS_TIMEOUT:-900}}"
   local before after rc=0 pid ticks=0

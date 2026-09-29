@@ -22,7 +22,14 @@ pack_launch() {
 # tool/shell access while the .cursor/cli.json hub deny still holds. Note it is
 # `--force`/`--yolo`, NOT `--trust` (not a real flag): hand-rolling `agent -p
 # --trust` leaves the worker with no shell.
-pack_launch_headless() { exec agent -p --force "$1"; }
+# $2 (optional): model, from `fleet dispatch --model` (`--model <model>`,
+# verified in `agent --help`; `agent models` lists the valid ids).
+# shellcheck disable=SC2034  # read by fleet_model_args / fleet_pack_honors_model (bin/fleet-config.sh)
+PACK_MODEL_FLAG=--model
+pack_launch_headless() {
+  fleet_model_args "${2:-}"
+  exec agent -p --force "${FLEET_MODEL_ARGS[@]}" "$1"
+}
 
 # Cursor stores chats in ~/.cursor/chats/<md5(cwd)>/<chat-uuid>/ (meta.json
 # carries the cwd — verified). One md5 dir per working directory.

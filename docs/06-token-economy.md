@@ -144,7 +144,28 @@ override `ROUTE_HARD`; quota fall-through and `ROUTE_CLAUDE` apply, so a pass
 never defaults to claude), bounds the run (`PASS_TIMEOUT`, default 900 s), records
 a quota-exhausted pack in the quota ledger, and flags a pass that touched the
 worktree (the prompt tells it not to; the check makes a violation visible).
-`--with <pack[:model]>` overrides the router for one call. A pass skips the
+`--with <pack[:model]>` overrides the router for one call.
+
+### Which packs honor the model
+
+`fleet dispatch --model M`, a router `pack:model` route and a pass's model all
+land in `pack_launch_headless <prompt> <model>`. A pack honors it by setting
+`PACK_MODEL_FLAG` (the CLI flag, verified in that CLI's `--help`) and building argv
+with `fleet_model_args` (`bin/fleet-config.sh`); no model = the flag is left off and
+the CLI default applies. A pack that leaves `PACK_MODEL_FLAG` unset ignores the
+model, and `fleet dispatch` / `fleet_pass` then warn on stderr (and in
+`dispatch/<project>/events.log` for dispatch) instead of dropping it silently.
+
+| pack | honors model | flag | list valid ids |
+|---|---|---|---|
+| claude | yes | `--model` | aliases `sonnet` / `opus` (haiku refused headless, see 02) |
+| gemini | yes | `--model` (`-m`) | — |
+| opencode | yes | `-m` (`provider/model`) | `opencode models` |
+| cursor | yes | `--model` | `agent models` |
+| copilot | yes | `--model` (`auto` = Copilot picks) | — |
+| antigravity | yes | `--model` | `agy models` |
+
+`test/test-pack-model.sh` pins the argv per pack with fake binaries. A pass skips the
 admission guard (it is short-lived and read-only) and ignores the dispatch depth
 limit (it dispatches nothing).
 

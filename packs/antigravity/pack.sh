@@ -65,10 +65,15 @@ PY
 # same mount-namespace jail as pack_launch (hub read-only, kernel-enforced).
 # Flag order matters: agy's `-p` consumes the next argv as the prompt, so
 # `--dangerously-skip-permissions` must NOT follow `-p` (MAT-14).
+# $2 (optional): model, from `fleet dispatch --model` (`--model`, verified in
+# agy --help; `agy models` lists the ids).
+# shellcheck disable=SC2034  # read by fleet_model_args / fleet_pack_honors_model (bin/fleet-config.sh)
+PACK_MODEL_FLAG=--model
 pack_launch_headless() {
   local adddir=()
   [ -n "${HUB:-}" ] && adddir=(--add-dir "$HUB")
-  _fleet_hub_ro_exec agy --dangerously-skip-permissions "${adddir[@]}" -p "$1"
+  fleet_model_args "${2:-}"
+  _fleet_hub_ro_exec agy --dangerously-skip-permissions "${adddir[@]}" "${FLEET_MODEL_ARGS[@]}" -p "$1"
 }
 
 # fleet global: agy reuses ~/.gemini/, whose GEMINI.md is the global instructions

@@ -156,7 +156,7 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           # path allowlist, checked on exit and by `fleet gate`
                           #   (advisory unless :blocking); or --spec task.spec
                           #   (key=value: deliverable / scope / checks) — docs/07
-   fleet dispatch --model opus big "<task>"   # pick the worker's model (claude)
+   fleet dispatch --model opus big "<task>"   # pick the worker's model (every pack; table in docs/06)
    fleet --machine vm dispatch my-task "<task>"  # headless worker ON the VM
    fleet route            # print pack:model chosen by task preferences (e.g. ROUTE_MEDIUM)
    fleet route --difficulty hard  # resolve route for hard difficulty
