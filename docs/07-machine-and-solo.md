@@ -238,8 +238,26 @@ monitoring the fleet need an automated signal rather than hanging indefinitely.
   blocking servers as `[dispatch: blocked-on-foreground-process (<server>)]`.
   `fleet status` exposes `stalled: true`, `child_processes`, `blocked_on_server`, `last_activity`,
   `activity_age_sec`, and `stall_threshold_sec` in `--json`.
+- **Structured task spec:** a dispatch's constraints are given as flags or as a small
+  spec file, not as prose in the brief. `fleet dispatch [--deliverable pr|push]
+  [--scope GLOBS] [--checks LIST] [--spec FILE] <name> "<task>"`; `--spec FILE` is
+  `key=value` lines (`#` comments) with keys `deliverable` (`pr|push`), `scope`
+  (path allowlist: comma/space separated globs, `**` crosses directories, a
+  directory allows everything under it) and `checks` (convention-check names,
+  `name` advisory or `name:blocking`, see [06](06-token-economy.md)). Explicit
+  flags win over the spec file. Without any of them nothing changes. The values
+  are recorded in the worker's `.meta` (kept across auto-retry/fallback).
+- **Scope enforcement:** the scope is one more check of the gate's shared
+  mechanism (`bin/fleet_checks.py`): the paths this branch changed (committed vs
+  `DEFAULT_BASE`, plus uncommitted/untracked) must match the allowlist. On worker
+  exit, `_dispatch-run` prints violations as `WARN scope <file>:1 ...`
+  (advisory: status stays `done rc=0`, a `scope-violation` event is logged);
+  with `--checks scope:blocking` the worker is recorded as `done-out-of-scope`
+  (`fleet wait` rc 1). `fleet gate` run in the worktree applies the same
+  scope (from the worker's meta, `GATE_SCOPE`, or `fleet gate --scope GLOBS`).
 - **Deliverable verification on exit:** when opt-in deliverable checking is active
-  (via `fleet dispatch --deliverable pr|push` or `[deliverable: pr]` in the brief),
+  (via `fleet dispatch --deliverable pr|push`, a spec file, or — **deprecated**, still
+  parsed for one more release with a warning — a `[deliverable: pr]` marker in the brief),
   a worker that finishes rc=0 without having pushed the branch or opened a PR is marked
   `done-without-deliverable` instead of `done rc=0`.
 - **Coordinator wake-up:** `fleet wait [<name>]` stops waiting as soon as a target

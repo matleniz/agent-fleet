@@ -42,13 +42,18 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
   (no subcommand)      launch/resume the COORDINATOR in the project's docs hub
                        (in tmux; --machine picks where, default: local)
   w <name> [base]      create/reopen a worker worktree + launch the agent (tmux)
-  dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--model M] <name> "<task>" [base]
+  dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--deliverable [pr|push]]
+           [--scope GLOBS] [--checks LIST] [--spec FILE] [--model M] <name> "<task>" [base]
                        headless worker in a detached tmux window (for an
                        agent-coordinator): create/reopen the worktree, run the
                        task non-interactively. --machine M dispatches on a VM
                        (delegated to its container). --auto routes pack+model via
                        configurable preferences (--difficulty D, --kind K, --escalate).
-                       --model M picks the worker model explicitly. Monitor:
+                       --model M picks the worker model explicitly. --deliverable,
+                       --scope (path allowlist) and --checks (e.g. scope:blocking)
+                       — or a --spec FILE of those key=value lines — are the
+                       structured task spec; the scope is enforced on exit and by
+                       `fleet gate` (advisory unless :blocking). Monitor:
                        fleet attach / ls (w and dispatch refuse when the target
                        machine is at its limit; --force skips the guard)
   route [--difficulty D] [--kind K] [--escalate] [--task T]
@@ -85,7 +90,7 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
   refresh [<name>]     re-run enabled packs' worker setup (one worktree, or all)
   add-agent <pack>     enable a pack for this project, then refresh worktrees
   agents               enabled packs for this project (default first)
-  gate [--review]      run the project's declared pre-PR checks (GATE_CMDS in
+  gate [--review] [--scope GLOBS]  run the project's declared pre-PR checks (GATE_CMDS in
                        the .env, one command per line): auto-fixes run inside
                        the commands, only what still fails is printed. No
                        GATE_CMDS = no-op. Workers run it before opening a PR.
@@ -822,6 +827,8 @@ cmd_gate() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --review) review=1 ;;
+      --scope)  [ $# -ge 2 ] || { echo "error: --scope needs a value" >&2; return 2; }
+                args+=(--scope "$(python3 "$SELF_DIR/fleet_checks.py" norm-scope "$2")") || return 2; shift ;;
       *) args+=("$1") ;;
     esac
     shift
@@ -835,21 +842,62 @@ cmd_gate() {
   return "$rc"
 }
 
+# Convention checks (bin/fleet_checks.py) share the gate's report: one line per
+# finding as file:line, advisory (WARN, never fails) or blocking (BLOCK, counts
+# as a failed check). Enabled by GATE_CHECKS / the worker's dispatch spec /
+# --scope; none enabled = nothing runs.
+gate_convention_checks() {  # <root> <scope> ; prints report, returns 1 on a blocking finding
+  local root="$1" scope="$2" checks="${GATE_CHECKS:-}" name meta
+  name="$(basename "$root")"
+  local sdir; sdir="$(dispatch_state_dir 2>/dev/null || true)"
+  meta="${sdir:+$sdir/$name.meta}"
+  if [ -n "$meta" ] && [ -f "$meta" ]; then
+    local m_checks m_scope
+    m_checks="$(sed -n 's/^checks=//p' "$meta" | head -1)"
+    m_scope="$(sed -n 's/^scope=//p' "$meta" | head -1)"
+    checks="${checks:+$checks,}$m_checks"
+    [ -n "$scope" ] || scope="$m_scope"
+  fi
+  [ -n "$scope" ] || scope="${GATE_SCOPE:-}"
+  [ -n "$checks" ] || [ -n "$scope" ] || return 0
+  local out crc=0 nfind
+  out="$(python3 "$SELF_DIR/fleet_checks.py" run --root "$root" --base "${DEFAULT_BASE:-origin/main}" --checks "$checks" --scope "$scope" 2>&1)" || crc=$?
+  if [ "$crc" -eq 2 ]; then
+    echo "gate: FAIL  convention checks misconfigured: $out"
+    return 1
+  fi
+  if [ -n "$out" ]; then
+    nfind="$(printf '%s\n' "$out" | wc -l)"
+    echo "gate: convention checks ($nfind finding(s); WARN = advisory, BLOCK = blocking)"
+    printf '%s\n' "$out" | head -n 200
+  else
+    echo "gate: ok    convention checks"
+  fi
+  [ "$crc" -eq 0 ]
+}
+
 gate_checks() {
-  local escalate=0
+  local escalate=0 scope_flag=""
   while :; do
     case "${1:-}" in
       --escalate) escalate=1; shift ;;
+      --scope) scope_flag="$2"; shift 2 ;;
       *) break ;;
     esac
   done
-  if [ -z "${GATE_CMDS:-}" ]; then
-    echo "gate: no checks declared (GATE_CMDS unset in $(basename "$CONF")) — nothing to gate"
-    return 0
-  fi
   # Run from the repo root when inside one, so path-relative checks cover the
   # whole tree regardless of the subdir the session invoked the gate from.
   local root; root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  local has_conv=0
+  if [ -n "${GATE_CHECKS:-}" ] || [ -n "$scope_flag" ] || [ -n "${GATE_SCOPE:-}" ]; then has_conv=1
+  else
+    local sd; sd="$(dispatch_state_dir 2>/dev/null || true)"
+    [ -n "$sd" ] && grep -qE '^(scope|checks)=' "$sd/$(basename "$root").meta" 2>/dev/null && has_conv=1
+  fi
+  if [ -z "${GATE_CMDS:-}" ] && [ "$has_conv" = 0 ]; then
+    echo "gate: no checks declared (GATE_CMDS unset in $(basename "$CONF")) — nothing to gate"
+    return 0
+  fi
   local before after; before="$(git -C "$root" status --porcelain 2>/dev/null || true)"
   local line total=0 failed=0 rc out nlines
   while IFS= read -r line; do
@@ -867,7 +915,11 @@ gate_checks() {
       nlines="$(printf '%s\n' "$out" | wc -l)"
       [ "$nlines" -gt 200 ] && echo "gate: … output truncated ($nlines lines; re-run for the rest: $line)"
     fi
-  done <<< "$GATE_CMDS"
+  done <<< "${GATE_CMDS:-}"
+  if [ "$has_conv" = 1 ]; then
+    total=$((total + 1))
+    gate_convention_checks "$root" "$scope_flag" || failed=$((failed + 1))
+  fi
   after="$(git -C "$root" status --porcelain 2>/dev/null || true)"
   [ "$before" != "$after" ] && echo "gate: note — checks modified files (auto-fixes); include them in your commit"
   if [ "$failed" -gt 0 ]; then
@@ -1259,9 +1311,9 @@ dispatch_status_label() {  # <worker-name> [<worktree-path>] -> "[dispatch: runn
 # Provenance sidecar (WS3): record which coordinator spawned a worker and how.
 # Read by `fleet status` to rebuild the coordinator -> workers tree. A worker
 # with no parent (a bare `fleet w` started by a human) is "independent".
-write_worker_meta() {  # <worker-name> <mode: dispatch|interactive> [deliverable] [pack] [difficulty] [kind] [escalate]
+write_worker_meta() {  # <worker-name> <mode: dispatch|interactive> [deliverable] [pack] [difficulty] [kind] [escalate] [scope] [checks]
   local name="$1" mode="$2" deliv="${3:-}" pack="${4:-}"
-  local diff="${5:-}" kind="${6:-}" esc="${7:-}"
+  local diff="${5:-}" kind="${6:-}" esc="${7:-}" scope="${8:-}" checks="${9:-}"
   local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
   {
     printf 'machine=%s\n'     "${FLEET_MACHINE:-local}"
@@ -1273,12 +1325,15 @@ write_worker_meta() {  # <worker-name> <mode: dispatch|interactive> [deliverable
     [ -n "$diff" ]  && printf 'difficulty=%s\n'  "$diff"
     [ -n "$kind" ]  && printf 'kind=%s\n'        "$kind"
     [ -n "$esc" ]   && printf 'escalate=%s\n'    "$esc"
+    [ -n "$scope" ] && printf 'scope=%s\n'       "$scope"
+    [ -n "$checks" ] && printf 'checks=%s\n'      "$checks"
     printf 'retries=0\n'
   } > "$sdir/$name.meta"
 }
 
-cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--wait] [--deliverable [pr|push]] [--model M] <name> "<task>" [base]
+cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--wait] [--deliverable [pr|push]] [--scope GLOBS] [--checks LIST] [--spec FILE] [--model M] <name> "<task>" [base]
   local model="" taskfile_in="" auto="" difficulty="" kind="" escalate="" wait_after=0 deliverable_req=""
+  local scope_req="" checks_req="" spec_file=""
   # Leading flags (dispatch's own; the global --machine is already parsed).
   # --task-file is the transport for remote dispatch (task shipped as a file so
   # multi-line prompts never fight ssh->docker->bash quoting); it is consumed
@@ -1299,9 +1354,27 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
           deliverable_req="pr"; shift 1
         fi
         ;;
+      --scope)      [ $# -ge 2 ] || { echo "error: --scope needs a value" >&2; exit 2; }
+                    scope_req="$(python3 "$SELF_DIR/fleet_checks.py" norm-scope "$2")" || exit 2; shift 2 ;;
+      --checks)     [ $# -ge 2 ] || { echo "error: --checks needs a value" >&2; exit 2; }
+                    checks_req="$(python3 "$SELF_DIR/fleet_checks.py" norm-checks "$2")" || exit 2; shift 2 ;;
+      --spec)       [ $# -ge 2 ] || { echo "error: --spec needs a file" >&2; exit 2; }; spec_file="$2"; shift 2 ;;
       *) break ;;
     esac
   done
+  # Structured task spec (deliverable / scope / checks): explicit flags win, the
+  # spec file only fills what the flags left empty.
+  if [ -n "$spec_file" ]; then
+    local spec_out sk sv
+    spec_out="$(python3 "$SELF_DIR/fleet_checks.py" parse-spec "$spec_file")" || exit 2
+    while IFS='=' read -r sk sv; do
+      case "$sk" in
+        deliverable) [ -n "$deliverable_req" ] || deliverable_req="$sv" ;;
+        scope)       [ -n "$scope_req" ] || scope_req="$sv" ;;
+        checks)      [ -n "$checks_req" ] || checks_req="$sv" ;;
+      esac
+    done <<< "$spec_out"
+  fi
   local name="${1:-}"; shift || true
   local task=""
   if [ -n "$taskfile_in" ]; then
@@ -1310,7 +1383,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
     task="${1:-}"; shift || true
   fi
   local base="${1:-}"
-  [ -z "$name" ] || [ -z "$task" ] && { echo "usage: fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--wait] [--deliverable [pr|push]] [--model M] <name> \"<task>\" [base]" >&2; exit 2; }
+  [ -z "$name" ] || [ -z "$task" ] && { echo "usage: fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--wait] [--deliverable [pr|push]] [--scope GLOBS] [--checks LIST] [--spec FILE] [--model M] <name> \"<task>\" [base]" >&2; exit 2; }
   fleet_valid_name "$name" "worker name" || exit 2   # threads through tmux/ssh unquoted
 
   # Check recursion depth limit (prevents runaway dispatch chains)
@@ -1352,7 +1425,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
     command -v ssh >/dev/null || { echo "error: remote dispatch needs ssh" >&2; exit 2; }
     version_preflight   # non-fatal warning if the VM engine lags the local one
     local b64; b64="$(printf '%s' "$task" | base64 | tr -d '\n')"
-    local inner="tf=\$(mktemp); echo $b64 | base64 -d > \$tf; fleet --project $M_PROJECT${agent:+ -a $agent} dispatch${model:+ --model $model}${auto:+ --auto}${difficulty:+ --difficulty $difficulty}${kind:+ --kind $kind}${escalate:+ --escalate}${deliverable_req:+ --deliverable $deliverable_req} --task-file \$tf $name${base:+ $base}"
+    local inner="tf=\$(mktemp); echo $b64 | base64 -d > \$tf; fleet --project $M_PROJECT${agent:+ -a $agent} dispatch${model:+ --model $model}${auto:+ --auto}${difficulty:+ --difficulty $difficulty}${kind:+ --kind $kind}${escalate:+ --escalate}${deliverable_req:+ --deliverable $deliverable_req}${scope_req:+ --scope \"$scope_req\"}${checks_req:+ --checks \"$checks_req\"} --task-file \$tf $name${base:+ $base}"
     ssh "$M_HOST" "docker exec $M_CONTAINER bash -lc '$inner'"
     return $?
   fi
@@ -1369,15 +1442,21 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
     "$NEW_WORKER" "$name" "${base:-${DEFAULT_BASE:-origin/main}}" || exit 1
   fi
   if [ -z "$deliverable_req" ]; then
+    # Deprecated: deliverable markers in the task prose (use --deliverable or a
+    # --spec file). Still parsed for one release, with a warning.
     case "$task" in
       *"[deliverable: push]"*|*"DELIVERABLE: push"*|*"[require-deliverable: push]"*) deliverable_req="push" ;;
       *"[deliverable:"*|*"DELIVERABLE:"*|*"[require-deliverable:"*) deliverable_req="pr" ;;
       *) deliverable_req="${WORKER_REQUIRE_DELIVERABLE:-}" ;;
     esac
+    case "$task" in
+      *"[deliverable:"*|*"DELIVERABLE:"*|*"[require-deliverable:"*)
+        echo "warning: deliverable markers in the task text are deprecated (parsed for one more release); use 'fleet dispatch --deliverable [pr|push]' or a --spec file" >&2 ;;
+    esac
   fi
   local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
   printf '%s\n' "$task" > "$sdir/$name.task"
-  write_worker_meta "$name" dispatch "$deliverable_req" "$agent" "$difficulty" "$kind" "$escalate"
+  write_worker_meta "$name" dispatch "$deliverable_req" "$agent" "$difficulty" "$kind" "$escalate" "$scope_req" "$checks_req"
   local taskfile; taskfile="$(mktemp "${TMPDIR:-/tmp}/fleet-task.XXXXXX")"
   printf '%s\n' "$task" > "$taskfile"
   printf 'running' > "$sdir/$name.status"
@@ -1518,6 +1597,30 @@ $task" "${FLEET_MODEL:-}" ) 2>&1 | tee "$out_file"
       return 1
     fi
   fi
+  # Scope allowlist (dispatch spec): same checks/report mechanism as `fleet gate`.
+  if [ "$rc" -eq 0 ] && [ -f "$sdir/$name.meta" ]; then
+    local m_scope m_checks scope_out scope_rc=0
+    m_scope="$(sed -n 's/^scope=//p' "$sdir/$name.meta" | head -1)"
+    m_checks="$(sed -n 's/^checks=//p' "$sdir/$name.meta" | head -1)"
+    if [ -n "$m_scope" ]; then
+      scope_out="$(python3 "$SELF_DIR/fleet_checks.py" run --root "$dest" --base "${DEFAULT_BASE:-origin/main}" --checks "$m_checks" --scope "$m_scope")" || scope_rc=$?
+      if [ -n "$scope_out" ]; then
+        echo "$scope_out"
+        printf '%s %s scope-violation\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" >> "$sdir/events.log"
+        rotate_events_log "$sdir/events.log"
+      fi
+      if [ "$scope_rc" -eq 1 ]; then
+        printf 'done-out-of-scope' > "$sdir/$name.status"
+        printf '%s %s done-out-of-scope\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" >> "$sdir/events.log"
+        [ -n "${NTFY_TOPIC:-}" ] && "$NOTIFY" "$NTFY_TOPIC" "$name" "done-out-of-scope" >/dev/null 2>&1
+        echo "[fleet] worker '$name' changed paths outside its scope (blocking) — recorded as done-out-of-scope"
+        if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; then
+          tmux rename-window -t "$TMUX_PANE" "_done-$name" 2>/dev/null || true
+        fi
+        return 1
+      fi
+    fi
+  fi
   printf 'done rc=%s' "$rc" > "$sdir/$name.status"
   printf '%s %s done rc=%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$rc" >> "$sdir/events.log"
   rotate_events_log "$sdir/events.log"   # keep the append-only history bounded
@@ -1616,6 +1719,9 @@ worker_trigger_retry_or_fallback() {  # <worker-name> <reason> -> 0 if re-dispat
   cur_retries="${cur_retries:-0}"
   max_retries="${WORKER_MAX_RETRIES:-0}"
   deliv="$(sed -n 's/^deliverable=//p' "$meta_file" 2>/dev/null | head -1)"
+  local spec_scope spec_checks
+  spec_scope="$(sed -n 's/^scope=//p' "$meta_file" 2>/dev/null | head -1)"
+  spec_checks="$(sed -n 's/^checks=//p' "$meta_file" 2>/dev/null | head -1)"
 
   mkdir -p "$sdir"
   local log_file="$sdir/supervision.log"
@@ -1630,7 +1736,7 @@ worker_trigger_retry_or_fallback() {  # <worker-name> <reason> -> 0 if re-dispat
     local resume_prompt="RESUMPTION: You previously stopped ($reason). Check git status and worktree in $dest (branch $name) and complete the task.\n\n$original_task"
     local LT; LT="$(dispatch_tmux)"
     tmux kill-window -t "$LT:$name" 2>/dev/null || true
-    agent="$cur_pack" cmd_dispatch ${deliv:+--deliverable $deliv} "$name" "$(printf '%b' "$resume_prompt")"
+    agent="$cur_pack" cmd_dispatch ${deliv:+--deliverable $deliv} ${spec_scope:+--scope "$spec_scope"} ${spec_checks:+--checks "$spec_checks"} "$name" "$(printf '%b' "$resume_prompt")"
     return 0
   else
     local next_pack
@@ -1652,7 +1758,7 @@ worker_trigger_retry_or_fallback() {  # <worker-name> <reason> -> 0 if re-dispat
       local fallback_prompt="RESUMPTION (PACK FALLBACK): You are taking over with agent '$next_pack' after '$cur_pack' stopped ($reason). Inspect worktree in $dest (branch $name) and complete the task.\n\n$original_task"
       local LT; LT="$(dispatch_tmux)"
       tmux kill-window -t "$LT:$name" 2>/dev/null || true
-      agent="$next_agent" cmd_dispatch ${next_model:+--model $next_model} ${deliv:+--deliverable $deliv} "$name" "$(printf '%b' "$fallback_prompt")"
+      agent="$next_agent" cmd_dispatch ${next_model:+--model $next_model} ${deliv:+--deliverable $deliv} ${spec_scope:+--scope "$spec_scope"} ${spec_checks:+--checks "$spec_checks"} "$name" "$(printf '%b' "$fallback_prompt")"
       return 0
     else
       printf '%s %s exhausted pack=%s reason=%s\n' \
@@ -1753,7 +1859,7 @@ cmd_wait() {  # fleet wait [--json] [<name>] — block until dispatched worker(s
         fi
         ;;
       done\ rc=0) ;;
-      done-without-deliverable*)
+      done-without-deliverable*|done-out-of-scope*)
         [ "$worst" -lt 1 ] && worst=1
         ;;
       done\ rc=*)

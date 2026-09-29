@@ -425,6 +425,8 @@ def render_text(tree):
                     warn = ""
                     if w.get("dispatch_status") == "done-without-deliverable":
                         warn = "  [missing deliverable: branch not pushed or no PR]"
+                    elif w.get("dispatch_status") == "done-out-of-scope":
+                        warn = "  [changed paths outside its dispatch scope]"
                     elif (
                         (w["dispatch_status"] or "").startswith("done rc=0")
                         and ca == 0

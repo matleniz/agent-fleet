@@ -11,6 +11,17 @@ Unreleased until the first one.
 ## [Unreleased]
 
 ### Added
+- Structured dispatch task spec: `fleet dispatch --deliverable / --scope /
+  --checks / --spec FILE`. The scope allowlist reuses the gate's checks/report
+  mechanism (advisory by default, `scope:blocking` -> `done-out-of-scope`),
+  enforced on worker exit and by `fleet gate`. Prose deliverable markers
+  (`[deliverable: pr]`) are deprecated: still parsed, now with a warning.
+  Tests: `test/test-dispatch-spec-e2e.sh`, and the group e2e
+  `test/test-gate-spec-group-e2e.sh` (gate checks + spec scope, one report).
+- Opt-in convention checks for `fleet gate` (`GATE_CHECKS`, `bin/fleet_checks.py`):
+  `no-tracker-ids`, `docs-with-bin`, `tests-listed-in-ci`, `paths-exist`, each
+  reported as `file:line`, advisory by default or `:blocking`. Nothing is
+  enabled by default. Test: `test/test-gate-checks.sh`.
 - One shared headless review/aggregation primitive (`fleet_pass`,
   `bin/fleet-pass.sh`) over the existing `pack_launch_headless`, routed through
   `fleet route --kind <kind>` (never claude by default), and three opt-in

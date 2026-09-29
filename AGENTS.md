@@ -14,8 +14,9 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
   `~/.local/bin` symlinks (`fleet-status.py` / `fleet-context.py` /
   `fleet-chats-scan.py` / `fleet-feedback.py` are invoked by `fleet status` /
   `fleet context` / `fleet chats --scan` / `fleet feedback`, no symlink, like
-  `hub-readonly-guard.py`; `fleet_common.py` and `fleet_chat_parse.py` are shared
-  imports, not run directly — `fleet_chat_parse.py` also runs standalone as a CLI
+  `hub-readonly-guard.py`; `fleet_common.py`, `fleet_chat_parse.py` and
+  `fleet_checks.py` (gate convention checks + dispatch scope check, one
+  runner/report) are shared imports, not run directly — `fleet_chat_parse.py` also runs standalone as a CLI
   on one transcript).
 - `packs/` — one dir per agent CLI (`claude`, `gemini`, `opencode`, `cursor`,
   `antigravity`, `copilot`), each a `pack.sh` defining six required functions
