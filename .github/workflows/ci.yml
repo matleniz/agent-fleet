@@ -56,6 +56,7 @@ jobs:
                    test/test-name-validation.sh test/test-new-worker.sh \
                    test/test-legacy-isolation.sh test/test-claude-resume.sh \
                    test/test-orphan-windows.sh test/test-stale-done-windows.sh \
+                   test/test-worker-stall.sh \
                    test/test-antigravity-doctor.sh test/test-copilot-doctor.sh \
                    test/test-resolve-conf.sh test/test-tty-guard.sh \
                    test/barrier-guard.sh test/barrier-cursor.sh; do

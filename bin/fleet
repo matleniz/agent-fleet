@@ -230,10 +230,10 @@ real_dirty() {
   # line, and filtering that line would hide the real work from del/prune.
   if [ -z "${BARRIER_IGNORE+x}" ]; then BARRIER_IGNORE="$(barrier_ignore_regex)"; fi
   if [ -n "$BARRIER_IGNORE" ]; then
-    git -C "$1" status --porcelain -uall 2>/dev/null \
+    GIT_OPTIONAL_LOCKS=0 git -C "$1" status --porcelain -uall 2>/dev/null \
       | grep -vE "^\?\? ($BARRIER_IGNORE)" || true
   else
-    git -C "$1" status --porcelain -uall 2>/dev/null || true
+    GIT_OPTIONAL_LOCKS=0 git -C "$1" status --porcelain -uall 2>/dev/null || true
   fi
 }
 
@@ -646,7 +646,7 @@ cmd_ls() {
         if [ "$path" != "$MAIN" ]; then
           [ -n "$(real_dirty "$path")" ] && state="[UNCOMMITTED] "
           state="${state}$(sessions_label "$path")"
-          state="${state}$(dispatch_status_label "$name")"
+          state="${state}$(dispatch_status_label "$name" "$path")"
         fi
         printf '  %-18s %-26s %-9s %s%s\n' "$name" "${branch:-?}" "${head:0:7}" "$state" "$path"
         path=""; head=""; branch=""
@@ -1150,10 +1150,31 @@ rotate_events_log() {  # <path>
   tail -n "$((max/2))" "$f" > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f"
 }
 
-dispatch_status_label() {  # <worker-name> -> "[dispatch: running] " / "[dispatch: done rc=0] "
-  local f; f="$(dispatch_state_dir)/$1.status"
+worker_is_stalled() {  # <worker-name> [<worktree-path>] -> 0 if stalled, 1 if not
+  local name="$1" path="${2:-}" sdir
+  [ -z "$path" ] && [ -n "${WT_HOME:-}" ] && path="$WT_HOME/$name"
+  sdir="$(dispatch_state_dir)"
+  [ -f "$sdir/$name.status" ] || return 1
+  case "$(cat "$sdir/$name.status" 2>/dev/null)" in running*) ;; *) return 1 ;; esac
+  [ "${WORKER_STALL_MINUTES:-20}" -le 0 ] 2>/dev/null && return 1
+  python3 "$SELF_DIR/fleet_common.py" check-stall "$path" "$sdir/$name.status" "$sdir/$name.meta" 2>/dev/null
+}
+
+dispatch_status_label() {  # <worker-name> [<worktree-path>] -> "[dispatch: running] " / "[dispatch: running (stalled)] " / "[dispatch: done rc=0] "
+  local name="$1" path="${2:-}" f
+  [ -z "$path" ] && [ -n "${WT_HOME:-}" ] && path="$WT_HOME/$name"
+  f="$(dispatch_state_dir)/$name.status"
   [ -f "$f" ] || return 0
-  printf '[dispatch: %s] ' "$(cat "$f" 2>/dev/null)"
+  local s; s="$(cat "$f" 2>/dev/null)"
+  case "$s" in
+    running*)
+      if worker_is_stalled "$name" "$path"; then
+        printf '[dispatch: %s (stalled)] ' "$s"
+        return 0
+      fi
+      ;;
+  esac
+  printf '[dispatch: %s] ' "$s"
 }
 
 # Provenance sidecar (WS3): record which coordinator spawned a worker and how.
@@ -1311,15 +1332,25 @@ cmd_wait() {  # fleet wait [<name>] — block until dispatched worker(s) finish,
   if [ -n "$target" ] && [ ! -f "$dir/$target.status" ]; then
     echo "no dispatched worker '$target' for '$PROJ_NAME'." >&2; return 2
   fi
-  local f n pending
+  local f n pending stalled_any
   while :; do
     pending=0
+    stalled_any=0
     for f in "$dir"/*.status; do
       [ -e "$f" ] || continue
       n="$(basename "$f" .status)"
       [ -n "$target" ] && [ "$n" != "$target" ] && continue
-      case "$(cat "$f" 2>/dev/null)" in running*) pending=1 ;; esac
+      case "$(cat "$f" 2>/dev/null)" in
+        running*)
+          if worker_is_stalled "$n"; then
+            stalled_any=1
+          else
+            pending=1
+          fi
+          ;;
+      esac
     done
+    [ "$stalled_any" -eq 1 ] && break
     [ "$pending" -eq 0 ] && break
     sleep "${FLEET_WAIT_POLL:-3}"
   done
@@ -1329,8 +1360,21 @@ cmd_wait() {  # fleet wait [<name>] — block until dispatched worker(s) finish,
     n="$(basename "$f" .status)"
     [ -n "$target" ] && [ "$n" != "$target" ] && continue
     local s; s="$(cat "$f" 2>/dev/null)"
+    case "$s" in
+      running*)
+        if worker_is_stalled "$n"; then
+          s="$s (stalled)"
+          worst=3
+        else
+          [ "$worst" -lt 1 ] && worst=1
+        fi
+        ;;
+      done\ rc=0) ;;
+      done\ rc=*)
+        [ "$worst" -lt 1 ] && worst=1
+        ;;
+    esac
     printf '  %-18s %s\n' "$n" "$s"
-    case "$s" in done\ rc=0) ;; done\ rc=*) worst=1 ;; esac
   done
   return "$worst"
 }
