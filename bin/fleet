@@ -127,7 +127,7 @@ if [ -z "$sub" ]; then
       case "${1:-}" in -h|--help|"") exec "$SELF_DIR/fleet-init" ;; esac
       exec "$SELF_DIR/fleet-init" "$@" ;;
     ""|hub) sub="hub"; [ $# -gt 0 ] && shift ;;
-    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|chats|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|feedback|peek|send|route|_dispatch-run)
+    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|chats|doctor|sync-remote|dispatch|attach|wait|retry|global|machines|status|context|feedback|peek|send|route|_dispatch-run)
       sub="$1"; [ "$sub" = worker ] && sub=w; [ "$sub" = remote ] && sub=r; shift ;;
     -*) echo "error: unknown option '$1'" >&2; exit 2 ;;
     *)
@@ -1179,6 +1179,14 @@ rotate_events_log() {  # <path>
   tail -n "$((max/2))" "$f" > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f"
 }
 
+worker_blocking_server() {  # <worker-name> -> prints server command or returns 1
+  local name="$1" LT pid
+  LT="$(dispatch_tmux)"
+  pid="$(tmux list-panes -t "$LT:$name" -F '#{pane_pid}' 2>/dev/null | head -1 || true)"
+  [ -n "$pid" ] || return 1
+  python3 "$SELF_DIR/fleet_common.py" check-server "$pid" 2>/dev/null
+}
+
 worker_is_stalled() {  # <worker-name> [<worktree-path>] -> 0 if stalled, 1 if not
   local name="$1" path="${2:-}" sdir
   [ -z "$path" ] && [ -n "${WT_HOME:-}" ] && path="$WT_HOME/$name"
@@ -1197,6 +1205,16 @@ dispatch_status_label() {  # <worker-name> [<worktree-path>] -> "[dispatch: runn
   local s; s="$(cat "$f" 2>/dev/null)"
   case "$s" in
     running*)
+      local srv
+      srv="$(worker_blocking_server "$name" 2>/dev/null || true)"
+      if [ -n "$srv" ]; then
+        if worker_is_stalled "$name" "$path"; then
+          printf '[dispatch: %s (stalled, blocked on %s)] ' "$s" "$srv"
+        else
+          printf '[dispatch: blocked-on-foreground-process (%s)] ' "$srv"
+        fi
+        return 0
+      fi
       if worker_is_stalled "$name" "$path"; then
         printf '[dispatch: %s (stalled)] ' "$s"
         return 0
@@ -1209,18 +1227,21 @@ dispatch_status_label() {  # <worker-name> [<worktree-path>] -> "[dispatch: runn
 # Provenance sidecar (WS3): record which coordinator spawned a worker and how.
 # Read by `fleet status` to rebuild the coordinator -> workers tree. A worker
 # with no parent (a bare `fleet w` started by a human) is "independent".
-write_worker_meta() {  # <worker-name> <mode: dispatch|interactive>
-  local name="$1" mode="$2" sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
+write_worker_meta() {  # <worker-name> <mode: dispatch|interactive> [deliverable] [pack]
+  local name="$1" mode="$2" deliv="${3:-}" pack="${4:-}" sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
   {
-    printf 'machine=%s\n' "${FLEET_MACHINE:-local}"
-    printf 'parent=%s\n'  "${FLEET_COORDINATOR:-}"
-    printf 'mode=%s\n'    "$mode"
-    printf 'created=%s\n' "$(date -u +%FT%TZ 2>/dev/null || echo '')"
+    printf 'machine=%s\n'     "${FLEET_MACHINE:-local}"
+    printf 'parent=%s\n'      "${FLEET_COORDINATOR:-}"
+    printf 'mode=%s\n'        "$mode"
+    printf 'created=%s\n'     "$(date -u +%FT%TZ 2>/dev/null || echo '')"
+    [ -n "$deliv" ] && printf 'deliverable=%s\n' "$deliv"
+    [ -n "$pack" ]  && printf 'pack=%s\n'        "$pack"
+    printf 'retries=0\n'
   } > "$sdir/$name.meta"
 }
 
-cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--wait] [--model M] <name> "<task>" [base]
-  local model="" taskfile_in="" auto="" difficulty="" kind="" escalate="" wait_after=0
+cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--wait] [--deliverable [pr|push]] [--model M] <name> "<task>" [base]
+  local model="" taskfile_in="" auto="" difficulty="" kind="" escalate="" wait_after=0 deliverable_req=""
   # Leading flags (dispatch's own; the global --machine is already parsed).
   # --task-file is the transport for remote dispatch (task shipped as a file so
   # multi-line prompts never fight ssh->docker->bash quoting); it is consumed
@@ -1234,6 +1255,13 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
       --difficulty) [ $# -ge 2 ] || { echo "error: --difficulty needs a value" >&2; exit 2; }; difficulty="$2"; shift 2 ;;
       --kind)       [ $# -ge 2 ] || { echo "error: --kind needs a value" >&2; exit 2; }; kind="$2"; shift 2 ;;
       --escalate)   escalate=1; shift ;;
+      --deliverable|--require-deliverable)
+        if [ $# -ge 2 ] && case "${2:-}" in pr|push) true ;; *) false ;; esac; then
+          deliverable_req="$2"; shift 2
+        else
+          deliverable_req="pr"; shift 1
+        fi
+        ;;
       *) break ;;
     esac
   done
@@ -1245,7 +1273,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
     task="${1:-}"; shift || true
   fi
   local base="${1:-}"
-  [ -z "$name" ] || [ -z "$task" ] && { echo "usage: fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--model M] <name> \"<task>\" [base]" >&2; exit 2; }
+  [ -z "$name" ] || [ -z "$task" ] && { echo "usage: fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--wait] [--deliverable [pr|push]] [--model M] <name> \"<task>\" [base]" >&2; exit 2; }
   fleet_valid_name "$name" "worker name" || exit 2   # threads through tmux/ssh unquoted
 
   # Check recursion depth limit (prevents runaway dispatch chains)
@@ -1283,33 +1311,19 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
   # Resolve the target machine (honors --machine); dispatch defaults to local.
   target_machine local
   # --- remote dispatch: delegate to the container's OWN fleet ---------------
-  # The dispatch state (worktree, .status, meta, tmux window) must live on the
-  # machine where the worker runs, and the resource guard must check THAT box.
-  # So for a remote target we do not open a local window: we run the container's
-  # `fleet dispatch`, which then does a normal LOCAL dispatch there. Same
-  # ssh+docker+base64 transport as session_window.
   if [ "$M_LOCAL" != 1 ]; then
     command -v ssh >/dev/null || { echo "error: remote dispatch needs ssh" >&2; exit 2; }
     version_preflight   # non-fatal warning if the VM engine lags the local one
     local b64; b64="$(printf '%s' "$task" | base64 | tr -d '\n')"
-    local inner="tf=\$(mktemp); echo $b64 | base64 -d > \$tf; fleet --project $M_PROJECT${agent:+ -a $agent} dispatch${model:+ --model $model}${auto:+ --auto}${difficulty:+ --difficulty $difficulty}${kind:+ --kind $kind}${escalate:+ --escalate} --task-file \$tf $name${base:+ $base}"
+    local inner="tf=\$(mktemp); echo $b64 | base64 -d > \$tf; fleet --project $M_PROJECT${agent:+ -a $agent} dispatch${model:+ --model $model}${auto:+ --auto}${difficulty:+ --difficulty $difficulty}${kind:+ --kind $kind}${escalate:+ --escalate}${deliverable_req:+ --deliverable $deliverable_req} --task-file \$tf $name${base:+ $base}"
     ssh "$M_HOST" "docker exec $M_CONTAINER bash -lc '$inner'"
     return $?
   fi
   # --- local dispatch -------------------------------------------------------
   need_code_repo
-  # Guard rail: check this box's limits before spawning another worker (this is
-  # the fan-out path that OOMs a box). Locked probe->admit->create (S4): the
-  # window this dispatch starts only counts toward guard_probe once tmux
-  # new-window below runs, so the lock spans from here through that call.
-  # Any exit before then (guard refusal, missing tmux/pack, failed worktree
-  # create) releases it for free — closing the fd on process exit drops the
-  # flock (flock(1) NOTES) — so only the success path needs an explicit
-  # fleet_guard_unlock, right after the window is created.
   fleet_guard_lock || exit 2
   fleet_guard || exit 2
   command -v tmux >/dev/null || { echo "error: dispatch needs tmux (detached worker window)" >&2; exit 2; }
-  # The pack must support a headless launch (all bundled packs do).
   fleet_load_pack "$agent"
   declare -F pack_launch_headless >/dev/null \
     || { echo "error: pack '$agent' has no headless mode (pack_launch_headless)" >&2; exit 2; }
@@ -1317,13 +1331,19 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
   if [ ! -d "$dest" ]; then
     "$NEW_WORKER" "$name" "${base:-${DEFAULT_BASE:-origin/main}}" || exit 1
   fi
-  write_worker_meta "$name" dispatch   # provenance: parent coordinator + mode (WS3)
-  # Pass the task via a file, not the command line: prompts are multi-line and
-  # would otherwise fight tmux/shell quoting. _dispatch-run reads then deletes it.
+  if [ -z "$deliverable_req" ]; then
+    case "$task" in
+      *"[deliverable: push]"*|*"DELIVERABLE: push"*|*"[require-deliverable: push]"*) deliverable_req="push" ;;
+      *"[deliverable:"*|*"DELIVERABLE:"*|*"[require-deliverable:"*) deliverable_req="pr" ;;
+      *) deliverable_req="${WORKER_REQUIRE_DELIVERABLE:-}" ;;
+    esac
+  fi
+  local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
+  printf '%s\n' "$task" > "$sdir/$name.task"
+  write_worker_meta "$name" dispatch "$deliverable_req" "$agent"
   local taskfile; taskfile="$(mktemp "${TMPDIR:-/tmp}/fleet-task.XXXXXX")"
   printf '%s\n' "$task" > "$taskfile"
-  local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
-  printf 'running' > "$sdir/$name.status"   # _dispatch-run flips this to "done rc=N"
+  printf 'running' > "$sdir/$name.status"
   local LT; LT="$(dispatch_tmux)"
   # NOT `exec fleet`: control must return after the worker so _dispatch-run can
   # record completion + notify, and the window is kept for inspection.
@@ -1334,11 +1354,11 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
   # FLEET_MODEL (when --model is given) rides the same way to pack_launch_headless.
   local run="env FLEET_CONF='$CONF' FLEET_HOME='$FLEET_ROOT' FLEET_PACKS_DIR='$FLEET_PACKS_DIR' FLEET_DISPATCH_DEPTH='$((cur_depth + 1))'${model:+ FLEET_MODEL='$model'} fleet -a $agent _dispatch-run $name $taskfile"
   tmux has-session -t "$LT" 2>/dev/null || tmux new-session -d -s "$LT" -n _home
-  tmux kill-window -t "$LT:$name" 2>/dev/null || true   # replace any stale window
-  kill_done_windows "$LT" "$name"   # and a previous run's _done- pane (no duplicate names)
+  tmux kill-window -t "$LT:$name" 2>/dev/null || true
+  kill_done_windows "$LT" "$name"
   tmux new-window -t "$LT" -n "$name" \
     "$run; echo; echo '[worker $name exited — window kept for inspection; Ctrl-b & to close]'; exec bash"
-  fleet_guard_unlock   # window exists now (S4) — safe to admit the next dispatch
+  fleet_guard_unlock
   echo "dispatched: worker '$name' ($agent, headless${model:+, model=$model}) -> tmux $LT:$name"
   if [ "$wait_after" -eq 1 ]; then
     cmd_wait "$name"
@@ -1356,10 +1376,9 @@ cmd_dispatch_run() {  # internal: foreground headless launch inside a tmux windo
   [ -d "$dest" ] || { echo "error: no worktree $dest" >&2; exit 1; }
   local task; task="$(cat "$taskfile" 2>/dev/null)"; rm -f "$taskfile"
   [ -n "$task" ] || { echo "error: empty task" >&2; exit 1; }
-  # Standard worker preamble so every dispatched worker gets consistent framing;
-  # the coordinator's task follows. The barrier is mechanical regardless.
   local preamble="You are a code WORKER in the git worktree $dest (branch $name)."
   [ -n "${HUB:-}" ] && preamble="$preamble The docs hub at $HUB is READ-ONLY: do not edit it; if a hub doc needs changing, note it for the coordinator (do not write there)."
+  preamble="$preamble Do NOT run long-lived servers or watch modes in the foreground (e.g. 'npm run dev', 'vite', 'uvicorn', '--watch'); run background commands or use nohup/& if needed."
   preamble="$preamble Do the task, run the tests, commit on this branch. Task follows."
   fleet_load_pack "$agent"
   cd "$dest"
@@ -1378,6 +1397,22 @@ $task" "${FLEET_MODEL:-}" ) 2>&1 | tee "$out_file"
   local rc="${PIPESTATUS[0]}"
   set -e
   local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
+  local deliv=""
+  [ -f "$sdir/$name.meta" ] && deliv="$(sed -n 's/^deliverable=//p' "$sdir/$name.meta" 2>/dev/null | head -1)"
+  [ -z "$deliv" ] && deliv="${WORKER_REQUIRE_DELIVERABLE:-}"
+  if [ "$rc" -eq 0 ] && [ -n "$deliv" ]; then
+    if ! python3 "$SELF_DIR/fleet_common.py" check-deliverable "$dest" "$name" "$deliv" >/dev/null 2>&1; then
+      printf 'done-without-deliverable' > "$sdir/$name.status"
+      printf '%s %s done-without-deliverable\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" >> "$sdir/events.log"
+      rotate_events_log "$sdir/events.log"
+      [ -n "${NTFY_TOPIC:-}" ] && "$NOTIFY" "$NTFY_TOPIC" "$name" "done-without-deliverable" >/dev/null 2>&1
+      echo "[fleet] worker '$name' finished without required deliverable ($deliv) — recorded as done-without-deliverable"
+      if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; then
+        tmux rename-window -t "$TMUX_PANE" "_done-$name" 2>/dev/null || true
+      fi
+      return 1
+    fi
+  fi
   printf 'done rc=%s' "$rc" > "$sdir/$name.status"
   printf '%s %s done rc=%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$rc" >> "$sdir/events.log"
   rotate_events_log "$sdir/events.log"   # keep the append-only history bounded
@@ -1425,6 +1460,119 @@ cmd_attach() {  # attach the local machine's tmux session (coordinator + workers
   session_attach
 }
 
+worker_next_agent() {  # <current_pack> -> prints next pack in AGENTS or returns 1
+  local cur="$1" found=0 a
+  for a in $(fleet_agents); do
+    if [ "$found" -eq 1 ]; then
+      echo "$a"; return 0
+    fi
+    [ "$a" = "$cur" ] && found=1
+  done
+  return 1
+}
+
+worker_has_quota_error() {  # <worker-name>
+  local name="$1" sdir f
+  sdir="$(dispatch_state_dir)"
+  f="$sdir/$name.status"
+  case "$(cat "$f" 2>/dev/null)" in
+    done\ rc=0*) return 1 ;;
+  esac
+  local pane_log LT
+  LT="$(dispatch_tmux)"
+  pane_log="$(tmux capture-pane -pt "$LT:_done-$name" 2>/dev/null || tmux capture-pane -pt "$LT:$name" 2>/dev/null || true)"
+  case "$pane_log" in
+    *"quota"*|*"Quota"*|*"rate limit"*|*"Rate limit"*|*"429"*|*"402"*) return 0 ;;
+  esac
+  return 1
+}
+
+worker_trigger_retry_or_fallback() {  # <worker-name> <reason> -> 0 if re-dispatched, 1 if exhausted/cannot
+  local name="$1" reason="$2" sdir dest meta_file task_file
+  sdir="$(dispatch_state_dir)"
+  meta_file="$sdir/$name.meta"
+  task_file="$sdir/$name.task"
+  dest="${WT_HOME:-}/$name"
+  [ -f "$task_file" ] || return 1
+  local original_task; original_task="$(cat "$task_file" 2>/dev/null)"
+  [ -n "$original_task" ] || return 1
+
+  local cur_pack cur_retries max_retries deliv
+  cur_pack="$(sed -n 's/^pack=//p' "$meta_file" 2>/dev/null | head -1)"
+  [ -z "$cur_pack" ] && cur_pack="$(fleet_default_agent)"
+  cur_retries="$(sed -n 's/^retries=//p' "$meta_file" 2>/dev/null | head -1)"
+  cur_retries="${cur_retries:-0}"
+  max_retries="${WORKER_MAX_RETRIES:-0}"
+  deliv="$(sed -n 's/^deliverable=//p' "$meta_file" 2>/dev/null | head -1)"
+
+  mkdir -p "$sdir"
+  local log_file="$sdir/supervision.log"
+
+  if [ "$cur_retries" -lt "$max_retries" ]; then
+    local new_retries=$((cur_retries + 1))
+    sed -i "s/^retries=.*/retries=$new_retries/" "$meta_file" 2>/dev/null || echo "retries=$new_retries" >> "$meta_file"
+    printf '%s %s retry pack=%s attempt=%s/%s reason=%s\n' \
+      "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$cur_pack" "$new_retries" "$max_retries" "$reason" >> "$log_file"
+    rotate_events_log "$log_file"
+    echo "[fleet supervision] worker '$name' ($cur_pack) $reason — auto-retrying (attempt $new_retries/$max_retries)"
+    local resume_prompt="RESUMPTION: You previously stopped ($reason). Check git status and worktree in $dest (branch $name) and complete the task.\n\n$original_task"
+    local LT; LT="$(dispatch_tmux)"
+    tmux kill-window -t "$LT:$name" 2>/dev/null || true
+    agent="$cur_pack" cmd_dispatch ${deliv:+--deliverable $deliv} "$name" "$(printf '%b' "$resume_prompt")"
+    return 0
+  else
+    local next_pack
+    next_pack="$(worker_next_agent "$cur_pack")" || true
+    if [ -n "$next_pack" ]; then
+      sed -i "s/^pack=.*/pack=$next_pack/" "$meta_file" 2>/dev/null || echo "pack=$next_pack" >> "$meta_file"
+      sed -i "s/^retries=.*/retries=0/" "$meta_file" 2>/dev/null || echo "retries=0" >> "$meta_file"
+      printf '%s %s fallback from=%s to=%s reason=%s\n' \
+        "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$cur_pack" "$next_pack" "$reason" >> "$log_file"
+      rotate_events_log "$log_file"
+      echo "[fleet supervision] worker '$name' exhausted retries on $cur_pack — falling back to $next_pack"
+      local fallback_prompt="RESUMPTION (PACK FALLBACK): You are taking over with agent '$next_pack' after '$cur_pack' stopped ($reason). Inspect worktree in $dest (branch $name) and complete the task.\n\n$original_task"
+      local LT; LT="$(dispatch_tmux)"
+      tmux kill-window -t "$LT:$name" 2>/dev/null || true
+      agent="$next_pack" cmd_dispatch ${deliv:+--deliverable $deliv} "$name" "$(printf '%b' "$fallback_prompt")"
+      return 0
+    else
+      printf '%s %s exhausted pack=%s reason=%s\n' \
+        "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$cur_pack" "$reason" >> "$log_file"
+      rotate_events_log "$log_file"
+      echo "[fleet supervision] worker '$name' exhausted all retries and packs in AGENTS ($reason)"
+      return 1
+    fi
+  fi
+}
+
+cmd_retry() {  # fleet retry [--fallback] [--pack P] <name>
+  local fallback=0 forced_pack=""
+  while :; do
+    case "${1:-}" in
+      --fallback) fallback=1; shift ;;
+      --pack)     [ $# -ge 2 ] || { echo "error: --pack needs a value" >&2; exit 2; }; forced_pack="$2"; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  local name="${1:-}"
+  [ -z "$name" ] && { echo "usage: fleet retry [--fallback] [--pack P] <name>" >&2; exit 2; }
+  need_code_repo
+  local sdir; sdir="$(dispatch_state_dir)"
+  [ -f "$sdir/$name.task" ] || { echo "error: no task history for worker '$name'" >&2; exit 1; }
+  if [ -n "$forced_pack" ]; then
+    fleet_agent_enabled "$forced_pack" || { echo "error: pack '$forced_pack' is not enabled in AGENTS" >&2; exit 2; }
+    sed -i "s/^pack=.*/pack=$forced_pack/" "$sdir/$name.meta" 2>/dev/null || echo "pack=$forced_pack" >> "$sdir/$name.meta"
+    sed -i "s/^retries=.*/retries=0/" "$sdir/$name.meta" 2>/dev/null || echo "retries=0" >> "$sdir/$name.meta"
+  elif [ "$fallback" -eq 1 ]; then
+    local cur; cur="$(sed -n 's/^pack=//p' "$sdir/$name.meta" 2>/dev/null | head -1)"
+    [ -z "$cur" ] && cur="$(fleet_default_agent)"
+    local next; next="$(worker_next_agent "$cur")" || { echo "error: no next pack in AGENTS after $cur" >&2; exit 1; }
+    sed -i "s/^pack=.*/pack=$next/" "$sdir/$name.meta" 2>/dev/null || echo "pack=$next" >> "$sdir/$name.meta"
+    sed -i "s/^retries=.*/retries=0/" "$sdir/$name.meta" 2>/dev/null || echo "retries=0" >> "$sdir/$name.meta"
+  fi
+  worker_trigger_retry_or_fallback "$name" "manual-retry"
+}
+
 cmd_wait() {  # fleet wait [--json] [<name>] — block until dispatched worker(s) finish, then report
   local as_json=0
   if [ "${1:-}" = "--json" ]; then
@@ -1446,9 +1594,21 @@ cmd_wait() {  # fleet wait [--json] [<name>] — block until dispatched worker(s
       case "$(cat "$f" 2>/dev/null)" in
         running*)
           if worker_is_stalled "$n"; then
-            stalled_any=1
+            if [ "${WORKER_MAX_RETRIES:-0}" -gt 0 ] && worker_trigger_retry_or_fallback "$n" "stall"; then
+              pending=1
+            else
+              stalled_any=1
+            fi
           else
             pending=1
+          fi
+          ;;
+        done\ rc=*)
+          local s; s="$(cat "$f" 2>/dev/null)"
+          if [ "$s" != "done rc=0" ] && [ "${WORKER_MAX_RETRIES:-0}" -gt 0 ] && worker_has_quota_error "$n"; then
+            if worker_trigger_retry_or_fallback "$n" "quota"; then
+              pending=1
+            fi
           fi
           ;;
       esac
@@ -1782,6 +1942,7 @@ case "$sub" in
   _dispatch-run) cmd_dispatch_run "$@" ;;
   attach)        cmd_attach ;;
   wait)          cmd_wait "$@" ;;
+  retry)         cmd_retry "$@" ;;
   global)        cmd_global "$@" ;;
   r)           cmd_remote "$@" ;;
   ls)          cmd_ls ;;

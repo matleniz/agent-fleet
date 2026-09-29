@@ -151,17 +151,22 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet dispatch --auto my-task "<task>"     # route worker pack:model from preferences
    fleet dispatch --difficulty easy my-task "fix typo"  # route by task difficulty
    fleet dispatch --wait my-task "<task>" # dispatch and block in background to wake on exit
+   fleet dispatch --deliverable pr my-task "<task>" # require pushed branch + open PR on exit
    fleet dispatch --model opus big "<task>"   # pick the worker's model (claude)
    fleet --machine vm dispatch my-task "<task>"  # headless worker ON the VM
    fleet route            # print pack:model chosen by task preferences (e.g. ROUTE_MEDIUM)
    fleet route --difficulty hard  # resolve route for hard difficulty
    fleet wait my-task     # block until a dispatched worker finishes (rc 0/1; exits 3 on stall;
                           #   prints parseable summary: duration, commits, pr; --json supported)
-   fleet ls               # worktrees (session markers + [dispatch: done rc=N / running (stalled)]);
+   fleet retry my-task    # resume a stalled/stopped worker (or --fallback to next pack in AGENTS)
+   fleet ls               # worktrees (session markers + [dispatch: done rc=N / running (stalled) /
+                          #   blocked-on-foreground-process / done-without-deliverable]);
                           #   also lists orphan tmux windows (no worktree /
                           #   deleted pane path) — reap with prune --windows
-   fleet status           # the whole tree (machines/coordinator/workers/queue, stall health)
-   fleet status --json    # same, machine-readable (stalled flag, activity age, stall threshold)
+   fleet status           # the whole tree (machines/coordinator/workers/queue, stall health,
+                          #   child process tree, blocked servers)
+   fleet status --json    # same, machine-readable (stalled flag, activity age, stall threshold,
+                          #   child_processes, blocked_on_server)
    fleet status --remote  # also gather VM sessions over ssh (default: local only)
    fleet context          # what an agent auto-reads at launch, per role + ~tokens
    fleet context --json --budget 3000  # machine-readable; exit non-zero if over budget
@@ -237,10 +242,13 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    `WORKER_NODE_MAX_MB` (a V8 heap cap that OOM-kills a leaking node worker
    cleanly), and note `fleet del`/`prune` now reap the worker's tmux window so
    dead windows stop inflating the count. Headless dispatches are supervised
-   against stalls (`WORKER_STALL_MINUTES`, default 20m, `0` = off): when a
-   running worker makes no progress (commits, index, dirty files) for that long,
-   `fleet ls` and `fleet status` flag it as stalled, and `fleet wait` unblocks
-   with exit code 3 so coordinators wake up promptly instead of waiting forever.
+   against stalls (`WORKER_STALL_MINUTES`, default 20m, `0` = off) and blocking foreground
+   servers (`vite`, `npm run dev`, `uvicorn`, `--watch`): `fleet ls` and `fleet status`
+   surface `[dispatch: running (stalled)]` and `[dispatch: blocked-on-foreground-process]`.
+   When opt-in deliverables (`--deliverable pr|push`) are required, finishing without
+   pushing or opening a PR reports `done-without-deliverable`. When auto-retry is enabled
+   (`WORKER_MAX_RETRIES`), stalled workers or quota failures are automatically re-dispatched
+   with a resumption preamble, falling back to the next pack in `AGENTS` after N attempts.
    See [docs/07](docs/07-machine-and-solo.md#worker-health-stall-detection-and-watchdog-supervision).
 
 **Working solo is fine.** You do not need workers, a queue, or routines to
