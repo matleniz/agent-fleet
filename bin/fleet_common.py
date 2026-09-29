@@ -397,6 +397,27 @@ _SERVER_RE = re.compile(
 )
 
 
+# Only the executable and its first arguments identify a server; anything past
+# a prompt/inline-script flag is free text (a headless worker runs
+# `claude -p "<preamble citing 'npm run dev', 'vite', '--watch'>"`) and must
+# never match. Tokens are whitespace-split from `ps` args (quoting is lost).
+_CMD_HEAD_TOKENS = 6
+_CMD_TEXT_FLAGS = frozenset(
+    {"-p", "--print", "--prompt", "--append-system-prompt", "-c", "-e", "--eval"}
+)
+
+
+def _cmd_head(cmd):
+    """The executable + leading arguments of a command line, cut before any
+    free-text flag and capped at _CMD_HEAD_TOKENS tokens."""
+    head = []
+    for tok in cmd.split()[:_CMD_HEAD_TOKENS]:
+        if tok in _CMD_TEXT_FLAGS:
+            break
+        head.append(tok)
+    return " ".join(head)
+
+
 def get_process_children(parent_pid, include_self=False):
     """Find all descendant processes of parent_pid (and optionally parent_pid itself)."""
     try:
@@ -437,11 +458,14 @@ def get_process_children(parent_pid, include_self=False):
 
 
 def detect_blocking_server(parent_pid):
-    """Detect if parent_pid or any descendant process is a long-lived blocking server or watch mode."""
+    """Detect if parent_pid or any descendant process is a long-lived blocking server or watch mode.
+
+    Matches only the executable and its first arguments (see _cmd_head), never a
+    prompt argument.
+    """
     children = get_process_children(parent_pid, include_self=True)
     for c in children:
-        cmd = c.get("cmd", "")
-        m = _SERVER_RE.search(cmd)
+        m = _SERVER_RE.search(_cmd_head(c.get("cmd", "")))
         if m:
             return m.group(0).strip()
     return None
