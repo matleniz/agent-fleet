@@ -27,6 +27,9 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from fleet_common import (  # noqa: E402
     assert_not_legacy,
     barrier_files,
+    commits_ahead,
+    detect_blocking_server,
+    get_process_children,
     parse_env,
     worker_stall_info,
 )
@@ -186,17 +189,6 @@ def uncommitted(path):
     return False
 
 
-def commits_ahead(path, base):
-    """Commits on this worker's branch above the project base — the deliverable
-    signal. A worker that finished (rc=0) with 0 commits and nothing uncommitted
-    is "done but empty-handed" (agent failed the task, not the fleet)."""
-    if not base:
-        return None
-    out = run(["git", "-C", path, "rev-list", "--count", base + "..HEAD"])
-    out = out.strip()
-    return int(out) if out.isdigit() else None
-
-
 def tmux_window_details(session):
     """Name + pane path + pid + command for every window in the session."""
     out = run(
@@ -303,6 +295,7 @@ def local_sessions(env, proj, tmux):
 
     workers = []
     worker_names = []
+    pane_pids = {w["name"]: w.get("pane_pid") for w in details}
     if code_repo and wt_home:
         for t in worktrees(code_repo, wt_home):
             name = t["path"][len(wt_home.rstrip("/")) + 1 :]
@@ -325,6 +318,11 @@ def local_sessions(env, proj, tmux):
                 status_mtime=status_mtime,
                 env=env,
             )
+            w_pid = pane_pids.get(name)
+            child_procs = (
+                get_process_children(w_pid, include_self=True) if w_pid else []
+            )
+            server_cmd = detect_blocking_server(w_pid) if w_pid else None
             workers.append(
                 {
                     "name": name,
@@ -341,6 +339,8 @@ def local_sessions(env, proj, tmux):
                     "activity_age_sec": stall["activity_age_sec"],
                     "stall_threshold_sec": stall["stall_threshold_sec"],
                     "stalled": stall["stalled"],
+                    "child_processes": [c["cmd"] for c in child_procs],
+                    "blocked_on_server": server_cmd,
                 }
             )
 
@@ -415,13 +415,17 @@ def render_text(tree):
             for group, label in ((deps, "dispatched"), (indep, "independent")):
                 for w in group:
                     st = w["dispatch_status"] or ("live" if w["present"] else "idle")
-                    if w.get("stalled"):
+                    if w.get("blocked_on_server"):
+                        st = "blocked-on-foreground-process: %s" % w["blocked_on_server"]
+                    elif w.get("stalled"):
                         st = "%s (stalled)" % st
                     ca = w["commits_ahead"]
                     deliver = "" if ca is None else " %dc" % ca
                     dirty = " +uncommitted" if w["uncommitted"] else ""
                     warn = ""
-                    if (
+                    if w.get("dispatch_status") == "done-without-deliverable":
+                        warn = "  [missing deliverable: branch not pushed or no PR]"
+                    elif (
                         (w["dispatch_status"] or "").startswith("done rc=0")
                         and ca == 0
                         and not w["uncommitted"]

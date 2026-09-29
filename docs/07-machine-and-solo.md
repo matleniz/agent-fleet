@@ -227,22 +227,47 @@ or running a blocking foreground dev server without progressing), coordinators
 monitoring the fleet need an automated signal rather than hanging indefinitely.
 
 `WORKER_STALL_MINUTES` (default `20`; `0` = off) defines the progress threshold:
-- **Progress signal:** measured from actual worktree activity — recent commits,
+- **Progress signal & server watchdogs:** measured from actual worktree activity — recent commits,
   `.git/index` updates, and dirty file modifications (filtering barrier files),
   anchored at dispatch created and status timestamp. Tmux pane chatter alone does
-  *not* reset the clock.
-- **Reporting:** `fleet ls` surfaces stalled workers as `[dispatch: running (stalled)]`.
-  `fleet status` displays `(running (stalled))` in text and exposes `stalled: true`,
-  `last_activity` (ISO-8601 UTC), `activity_age_sec`, and `stall_threshold_sec` in `--json`.
+  *not* reset the clock. In addition, long-lived foreground server processes (`vite`,
+  `npm run dev`, `uvicorn`, `--watch` modes) are tracked across child process trees; workers
+  waiting on such processes are surfaced as `blocked-on-foreground-process`. Workers are also
+  instructed up front via prompt guidance to launch servers in the background.
+- **Reporting:** `fleet ls` surfaces stalled workers as `[dispatch: running (stalled)]` and
+  blocking servers as `[dispatch: blocked-on-foreground-process (<server>)]`.
+  `fleet status` exposes `stalled: true`, `child_processes`, `blocked_on_server`, `last_activity`,
+  `activity_age_sec`, and `stall_threshold_sec` in `--json`.
+- **Deliverable verification on exit:** when opt-in deliverable checking is active
+  (via `fleet dispatch --deliverable pr|push` or `[deliverable: pr]` in the brief),
+  a worker that finishes rc=0 without having pushed the branch or opened a PR is marked
+  `done-without-deliverable` instead of `done rc=0`.
 - **Coordinator wake-up:** `fleet wait [<name>]` stops waiting as soon as a target
   worker stalls and exits with return code `3` (distinct from `0` on clean finish and `1`
   on worker error), allowing supervisors and dispatch scripts to trigger recovery or
-  fallback workflows instead of blocking forever.
+  fallback workflows instead of blocking forever. On exit, `fleet wait` outputs a
+  parseable summary (`summary: worker=... status=... duration=... commits=... pr=...`)
+  or structured JSON via `--json`. Running `fleet dispatch --wait <name> "<task>"` (or
+  launching `fleet wait <name>` in the background right after dispatch) allows agent
+  coordinators to be automatically re-invoked when the worker exits. An optional
+  `FLEET_NOTIFY_HOOK` executable receives `<worker_name> <status> <exit_code>` on completion,
+  and `FLEET_WAIT_NOTIFY=1` can forward events to `NTFY_TOPIC`.
+- **Retry and fallback policy:** configure `WORKER_MAX_RETRIES` (default `0` = off).
+  When enabled, stalled workers or quota failures are automatically re-dispatched with
+  a resumption preamble up to N times; after N failures, supervision falls back to the
+  next pack: when routing is configured (`ROUTE_*`), the one `fleet-route.py` picks
+  (skipping packs in quota and the one that just failed, `--exclude`), otherwise the next
+  pack in `AGENTS`. A quota failure skips the retries and falls back at once. Quota is
+  detected only from the pack's own `pack_quota_pattern` (via the shared
+  `worker_has_quota_error`, also used by `_dispatch-run`) or an active
+  `$FLEET_ROOT/quota/<pack>` ledger entry, never from a generic 429/402 match. Stalls, retries, and fallbacks are journaled in `dispatch/<project>/supervision.log`.
+  Operators can also manually trigger a resume or fallback with `fleet retry [--fallback] [--pack P] <name>`.
 - **Progress recovery:** any file modification or git commit in the worker worktree
   immediately resets the activity age and clears the stalled flag.
 
 Override `WORKER_STALL_MINUTES` per project in its `.env` or globally in `default.env`.
 Set `WORKER_STALL_MINUTES=0` to disable stall detection.
+Set `WORKER_MAX_RETRIES=N` to enable automatic retries and fallback across `AGENTS`.
 
 ### How the active project is resolved
 

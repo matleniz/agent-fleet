@@ -291,11 +291,18 @@ def main():
     parser.add_argument("--task-file", help="Path to file containing task description")
     parser.add_argument("--depth", type=int, help="Current dispatch recursion depth")
     parser.add_argument(
-        "--quota-exceeded", "--exclude-pack",
+        "--quota-exceeded",
         dest="quota_exceeded",
         action="append",
         default=[],
         help="Mark pack(s) as out of quota",
+    )
+    parser.add_argument(
+        "--exclude", "--exclude-pack",
+        dest="exclude",
+        action="append",
+        default=[],
+        help="Exclude pack(s) from candidate selection",
     )
     parser.add_argument("--explain", action="store_true", help="Explain routing decisions on stderr")
     parser.add_argument("--json", action="store_true", help="Output routing decision as JSON")
@@ -325,6 +332,13 @@ def main():
     for item in re.split(r"[,\s]+", conf.get("ROUTE_QUOTA_EXCEEDED", "")):
         if item.strip():
             manual_exceeded.add(item.strip())
+
+    # Excluded packs (without writing to quota ledger)
+    excluded_packs = set()
+    for ex in args.exclude:
+        for item in re.split(r"[,\s]+", ex):
+            if item.strip():
+                excluded_packs.add(item.strip())
 
     # Standalone --quota-exceeded invocation: mark ledger and exit
     if args.quota_exceeded and not (
@@ -393,6 +407,11 @@ def main():
 
     selected = None
     for pack, model in candidates:
+        if pack in excluded_packs or (model and f"{pack}:{model}" in excluded_packs):
+            if args.explain:
+                sys.stderr.write(f"skip {pack}: explicitly excluded\n")
+            continue
+
         if pack not in enabled_agents:
             if args.explain:
                 sys.stderr.write(f"skip {pack}: not enabled in AGENTS ({', '.join(sorted(enabled_agents))})\n")

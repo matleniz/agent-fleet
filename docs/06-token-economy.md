@@ -174,7 +174,8 @@ does not cover. All four are usage discipline, not fleet code:
   `$FLEET_ROOT/quota/<pack>` with a configurable TTL (`ROUTE_QUOTA_TTL_SEC`, default 6h =
   21600s). The router skips any pack with an active ledger, logs the fallback, and routes
   to the next eligible candidate in the preference list. Recursive worker dispatch is bounded
-  by `ROUTE_MAX_DEPTH`.
+  by `ROUTE_MAX_DEPTH`. `fleet route --exclude <pack>` skips a pack for one call without
+  touching the ledger (used by supervision to pick the fallback after a failure).
 - **Cache-prefix hygiene.** The ~1/10 cache read only holds while the prefix
   is byte-identical and within TTL: keep volatile content (timestamps,
   per-turn state) out of the always-loaded context files, and place
