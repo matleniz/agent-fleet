@@ -102,13 +102,14 @@ sessions) never double-counts a view's shared windows.
 
 **Navigating in a view** (`fleet attach` prints this line before attaching, on a
 tty only): `Ctrl-b w` lists the windows (pick the worker), `Ctrl-b n` / `Ctrl-b p`
-go to the next / previous one, `Ctrl-b d` detaches (and removes the view). If
-`Ctrl-b w` seems dead, you are almost certainly running `fleet attach` **inside
-another tmux** (`$TMUX` set — `fleet attach` then warns): the outer tmux's prefix
-takes `Ctrl-b` first, so press it twice (`Ctrl-b Ctrl-b w`), or use the outer
-prefix twice if you rebound it. Same on WSL2: a Windows Terminal / IDE terminal
-running its own tmux counts as an outer tmux. `test/test-attach-chooser.sh` pins
-that the view itself receives `Ctrl-b w`.
+go to the next / previous one, `Ctrl-b d` detaches (and removes the view). Run
+from inside a tmux (`$TMUX` set), `fleet attach` does not nest: it switches the
+current client to the view (`Ctrl-b s` lists sessions to go back). The view
+itself does receive `Ctrl-b w` (`test/test-attach-chooser.sh` pins that through
+a pty). If `Ctrl-b w` still does nothing, the key is being taken before it
+reaches that tmux client: another tmux or multiplexer wrapping the terminal (then
+press its prefix twice), or a terminal / IDE shortcut bound to `Ctrl-b`. Check
+with `tmux show -g prefix` and try `Ctrl-b :choose-tree` from the view.
 
 A single legacy `REMOTE_HOST` (`fleet-init --remote HOST`, optional
 `REMOTE_CONTAINER`/`REMOTE_TMUX`/`REMOTE_PROJECT`/`REMOTE_ENGINE_DIR`) still
