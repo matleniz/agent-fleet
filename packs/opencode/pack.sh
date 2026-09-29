@@ -51,6 +51,7 @@ for s in sessions:  # newest first
 # fast with a clear error instead of letting `opencode run` retry until the
 # outer timeout (silent rc=124). Cloud providers without a configured baseURL
 # are not probed.
+PACK_MODEL_FLAG=-m
 pack_launch_headless() {
   fleet_node_heap_guard
   local t="${OPENCODE_HEADLESS_TIMEOUT:-300}"

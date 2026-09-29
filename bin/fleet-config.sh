@@ -181,7 +181,8 @@ _fleet_find_by_cwd() {
 # pack_launch [mode] launches interactively: no arg = fresh; --continue =
 # resume the last real session for this cwd; --pick = CLI session picker (packs
 # without a picker fall back to continue-last); --resume is a synonym for
-# --continue. pack_launch_headless <prompt> [model] runs one task
+# --continue. pack_launch_headless <prompt> [model] runs one task (see the model
+# convention at fleet_pack_honors_model)
 # non-interactively for `fleet dispatch`, with the same barrier + bypass
 # posture as pack_launch.
 # pack_barrier_files echoes the worktree-relative paths the pack writes during
@@ -203,6 +204,33 @@ fleet_agent_enabled() {
   local a
   for a in $(fleet_agents); do [ "$a" = "$1" ] && return 0; done
   return 1
+}
+
+# Model convention (one place, no per-pack copies). A pack that honors the
+# per-launch model of pack_launch_headless <prompt> <model> (and so `fleet
+# dispatch --model` / router `pack:model` routes) sets PACK_MODEL_FLAG to the CLI
+# flag it verified (e.g. PACK_MODEL_FLAG=--model) and builds argv with
+# fleet_model_args; a pack that leaves it unset ignores the model, and
+# fleet_warn_model_ignored says so loudly instead of dropping it silently.
+fleet_pack_honors_model() { [ -n "${PACK_MODEL_FLAG:-}" ]; }
+
+# fleet_model_args <model>: sets FLEET_MODEL_ARGS to (flag model), or () when no
+# model is requested (the CLI keeps its own default). Expand it quoted.
+fleet_model_args() {
+  FLEET_MODEL_ARGS=()
+  [ -n "${1:-}" ] && FLEET_MODEL_ARGS=("$PACK_MODEL_FLAG" "$1")
+  return 0
+}
+
+# fleet_warn_model_ignored <pack> <model> [events.log]: call AFTER fleet_load_pack.
+# No-op when no model was asked for or the pack honors it; else warn on stderr
+# and append a line to the events log when one is given.
+fleet_warn_model_ignored() {
+  [ -n "${2:-}" ] && ! fleet_pack_honors_model || return 0
+  local msg="pack '$1' ignores --model (asked: $2): it has no per-launch model flag, the CLI default applies"
+  echo "warning: $msg" >&2
+  [ -z "${3:-}" ] || printf '%s %s\n' "$(date -u +%FT%TZ 2>/dev/null)" "model-ignored: $msg" >> "$3"
+  return 0
 }
 
 fleet_load_pack() {

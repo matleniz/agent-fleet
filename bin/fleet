@@ -1456,6 +1456,8 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
   fleet_load_pack "$agent"
   declare -F pack_launch_headless >/dev/null \
     || { echo "error: pack '$agent' has no headless mode (pack_launch_headless)" >&2; exit 2; }
+  mkdir -p "$(dispatch_state_dir)"
+  fleet_warn_model_ignored "$agent" "$model" "$(dispatch_state_dir)/events.log"
   local dest="$WT_HOME/$name"
   if [ ! -d "$dest" ]; then
     "$NEW_WORKER" "$name" "${base:-${DEFAULT_BASE:-origin/main}}" || exit 1
@@ -1588,7 +1590,7 @@ cmd_dispatch_run() {  # internal: foreground headless launch inside a tmux windo
   # Run the worker in a subshell so pack_launch_headless's exec is contained and
   # control returns here to record completion (the "worker finished" signal).
   # FLEET_MODEL (set by `dispatch --model`) is passed as $2; packs that support a
-  # per-launch model use it, others ignore the extra arg.
+  # per-launch model (PACK_MODEL_FLAG) use it; the warning was raised at dispatch.
   # CRITICAL: this file runs under `set -e`. A bare failing subshell aborts before
   # `rc=$?` and the status write — coordinators then see forever-"running" and
   # `fleet wait` hangs (MAT-13). Disable -e around the launch; restore after.

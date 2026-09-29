@@ -19,7 +19,14 @@ pack_launch() {
 
 # Headless launch for `fleet dispatch`: one task non-interactively, same bypass
 # posture as pack_launch (barrier is the BeforeTool hook, unaffected).
-pack_launch_headless() { fleet_node_heap_guard; exec gemini -p "$1" --approval-mode yolo; }
+# $2 (optional): model, from `fleet dispatch --model` (`-m/--model`, verified in
+# gemini --help 0.50.0).
+PACK_MODEL_FLAG=--model
+pack_launch_headless() {
+  fleet_node_heap_guard
+  fleet_model_args "${2:-}"
+  exec gemini -p "$1" --approval-mode yolo "${FLEET_MODEL_ARGS[@]}"
+}
 
 # fleet global: ~/.gemini/GEMINI.md is Gemini's global instructions file, loaded
 # every session (docs: hierarchical global + project context). Symlink it to the

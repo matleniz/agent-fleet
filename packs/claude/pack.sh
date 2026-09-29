@@ -89,12 +89,14 @@ _claude_require_auto_capable() {  # <model or "">
 # The read-only-hub barrier (PreToolUse hook) is unaffected.
 # $2 (optional): the model for this worker, from `fleet dispatch --model` (else
 # the account default). --model is a real claude flag (verified against v2.1.x).
+PACK_MODEL_FLAG=--model
 pack_launch_headless() {
   _claude_require_auto_capable "${2:-}" || exit 2
   pack_claude_subagent_model
   fleet_node_heap_guard
   _claude_mcp_flags
-  exec claude -p "$1" --permission-mode auto "${FLEET_MCP_FLAGS[@]}" ${2:+--model "$2"}
+  fleet_model_args "${2:-}"
+  exec claude -p "$1" --permission-mode auto "${FLEET_MCP_FLAGS[@]}" "${FLEET_MODEL_ARGS[@]}"
 }
 
 # fleet global: point Claude's user file (~/.claude/CLAUDE.md) at the canonical
