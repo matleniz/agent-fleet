@@ -152,6 +152,10 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet dispatch --difficulty easy my-task "fix typo"  # route by task difficulty
    fleet dispatch --wait my-task "<task>" # dispatch and block in background to wake on exit
    fleet dispatch --deliverable pr my-task "<task>" # require pushed branch + open PR on exit
+   fleet dispatch --scope "src/**,tests/**" --checks scope:blocking my-task "<task>"
+                          # path allowlist, checked on exit and by `fleet gate`
+                          #   (advisory unless :blocking); or --spec task.spec
+                          #   (key=value: deliverable / scope / checks) — docs/07
    fleet dispatch --model opus big "<task>"   # pick the worker's model (claude)
    fleet --machine vm dispatch my-task "<task>"  # headless worker ON the VM
    fleet route            # print pack:model chosen by task preferences (e.g. ROUTE_MEDIUM)

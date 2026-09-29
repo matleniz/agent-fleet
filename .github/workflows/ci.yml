@@ -64,7 +64,7 @@ jobs:
                    test/barrier-guard.sh test/barrier-cursor.sh \
                    test/test-route-table.sh test/test-route-scorer.sh \
                    test/test-route-e2e.sh \
-                   test/test-gate-checks.sh \
+                   test/test-gate-checks.sh test/test-dispatch-spec-e2e.sh \
                    test/test-judge-e2e.sh test/test-race-e2e.sh test/test-fanin-e2e.sh test/test-pipeline-e2e.sh; do
             echo "::group::$t"
             bash "$t"
