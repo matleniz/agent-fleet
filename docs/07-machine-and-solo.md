@@ -208,11 +208,16 @@ is capped so it cannot grow without bound.
 **Orphan windows.** A tmux window can outlive its worktree (deleted outside
 fleet, an ad-hoc pane opened inside the project session, a cwd that no longer
 exists — tmux shows the pane path with ` (deleted)`). `fleet ls` and
-`fleet status` list those orphans; `fleet prune` reports them. Reap with the
-explicit `fleet prune --windows` (idle / deleted-path orphans only). A window
-that still has a live agent child needs `fleet --force prune --windows` — never
-killed by default. Reserved `hub` / `_home` windows are never orphans. Grouped
-`fv-*` views share the base session's windows, so one kill cleans them all.
+`fleet status` list those orphans; `fleet prune` reports them. Idle finished-
+dispatch panes renamed `_done-<name>` whose worktree is already gone are
+reaped automatically by plain `fleet prune` (safe: childless inspection shell,
+nothing left to inspect). Other orphans need the explicit
+`fleet prune --windows` (idle / deleted-path only). A window that still has a
+live agent child needs `fleet --force prune --windows` — never killed by
+default. `fleet del <name>` also works when the worktree is already gone: it
+reaps any leftover `<name>` / `_done-<name>` window and dispatch sidecars.
+Reserved `hub` / `_home` windows are never orphans. Grouped `fv-*` views share
+the base session's windows, so one kill cleans them all.
 
 ### How the active project is resolved
 

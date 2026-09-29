@@ -11,6 +11,11 @@ Unreleased until the first one.
 ## [Unreleased]
 
 ### Fixed
+- `fleet del <name>` reaps leftover `<name>` / `_done-<name>` panes and dispatch
+  sidecars even when the worktree is already gone; plain `fleet prune`
+  auto-reaps idle `_done-*` orphan windows (other orphans still need
+  `prune --windows`). Stops finished-dispatch panes accumulating across
+  multi-day batches. Regression: `test/test-stale-done-windows.sh`.
 - Finished `fleet dispatch` panes no longer burn `MAX_WORKERS` slots: the window
   is renamed `_done-<name>` after `done rc=N`, and `guard_probe` ignores
   `^_done-`. `fleet peek <machine> <name>` still resolves the original name.

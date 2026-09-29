@@ -166,10 +166,11 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           #   its .env): auto-fixes apply mechanically, only residual
                           #   failures print; no-op if the project declares none
    fleet peek local hub   # dump a session's terminal   ·   fleet send local hub "y"
-   fleet del my-task      # remove one (guarded)  ·  fleet prune  = all merged ones
-                          #   fleet prune --windows  also reaps orphan tmux
-                          #   windows (no worktree / deleted pane path; live
-                          #   orphans need --force)
+   fleet del my-task      # remove one (guarded; also reaps leftover window when
+                          #   the worktree is already gone)  ·  fleet prune =
+                          #   all merged ones (+ auto-reaps idle `_done-*`
+                          #   orphan panes). fleet prune --windows  also reaps
+                          #   other orphan tmux windows (live ones need --force)
    fleet agents / doctor  # enabled packs / installed+logged status per pack
    fleet chats [<worker>] # per-pack pointer to the recorded conversation (read
                           #   to reprise a dead/other agent's session; not portable)

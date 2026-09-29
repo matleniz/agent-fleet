@@ -69,11 +69,13 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
   ls                   list local CODE_REPO worktrees (session markers; machine
                        header is a reminder). Live remote sessions:
                        status --remote / peek — not this command
-  del <name>           remove a worktree (refuses if uncommitted)
-  prune [--windows]    remove every worktree whose branch is merged;
-                       --windows also reaps orphan tmux windows (no matching
-                       worktree, or pane path "(deleted)"). Live orphans need
-                       --force; without --windows, orphans are only reported
+  del <name>           remove a worktree (refuses if uncommitted; also reaps
+                       leftover window/state when the worktree is already gone)
+  prune [--windows]    remove every worktree whose branch is merged; always
+                       reaps idle `_done-*` orphan panes. --windows also reaps
+                       other orphan tmux windows (no matching worktree, or pane
+                       path "(deleted)"). Live orphans need --force; without
+                       --windows, non-_done- orphans are only reported
   refresh [<name>]     re-run enabled packs' worker setup (one worktree, or all)
   add-agent <pack>     enable a pack for this project, then refresh worktrees
   agents               enabled packs for this project (default first)
@@ -662,7 +664,17 @@ cmd_del() {
   [ -z "$name" ] && { echo "usage: fleet del <name>" >&2; exit 2; }
   need_code_repo
   local dest="$WT_HOME/$name"
-  [ -d "$dest" ] || { echo "error: worktree $dest not found" >&2; exit 1; }
+  # Worktree already gone: still reap leftover tmux / dispatch state so a prior
+  # incomplete cleanup (or del against a name whose tree was removed outside
+  # fleet) does not leave `_done-<name>` panes accumulating in the session.
+  if [ ! -d "$dest" ]; then
+    if worker_runtime_exists "$name"; then
+      reap_worker_state "$name"
+      echo "[fleet] no worktree at $dest — reaped leftover window/state for '$name'"
+      return 0
+    fi
+    echo "error: worktree $dest not found" >&2; exit 1
+  fi
   local dirty; dirty="$(real_dirty "$dest")"
   if [ -n "$dirty" ]; then
     echo "REFUSED: $dest has uncommitted changes:" >&2
@@ -711,9 +723,11 @@ cmd_prune() {
     echo "  prune $name (merged into $base)"; pruned=$((pruned+1))
   done
   echo "[fleet] prune: $pruned removed, $kept kept."
-  # Orphan windows (worktree gone outside fleet, ad-hoc panes, deleted cwd):
-  # report by default; only kill with the explicit --windows flag. A live orphan
-  # (agent still running) additionally needs --force (MAT-122).
+  # Idle finished-dispatch panes (`_done-*`) whose worktree is already gone are
+  # safe to reap without --windows / --force: no agent child, nothing to inspect
+  # against a missing tree. Other orphans (ad-hoc panes, live agents) stay
+  # report-only unless `prune --windows` (+ `--force` for live).
+  reap_idle_done_orphans
   if [ "$do_windows" = 1 ]; then
     prune_orphan_windows
   else
@@ -985,6 +999,22 @@ kill_done_windows() {  # <tmux-session> <worker-name> — every _done-<name> win
     tmux kill-window -t "$wid" 2>/dev/null || true
   done
 }
+
+# True when a worker still has a tmux window (<name> or _done-<name>) or a
+# dispatch sidecar — used by `fleet del` when the worktree is already gone.
+worker_runtime_exists() {  # <worker-name> → 0 if leftover state found
+  local name="$1" sdir sess
+  sdir="$(dispatch_state_dir)"
+  if [ -f "$sdir/$name.status" ] || [ -f "$sdir/$name.meta" ]; then
+    return 0
+  fi
+  command -v tmux >/dev/null 2>&1 || return 1
+  sess="$(dispatch_tmux)"
+  tmux has-session -t "$sess" 2>/dev/null || return 1
+  tmux list-windows -t "$sess" -F '#{window_name}' 2>/dev/null \
+    | grep -Eqx -- "$name|_done-$name"
+}
+
 reap_worker_state() {  # <worker-name>
   local name="$1" sdir
   if command -v tmux >/dev/null 2>&1; then
@@ -994,6 +1024,25 @@ reap_worker_state() {  # <worker-name>
   fi
   sdir="$(dispatch_state_dir)"
   rm -f "$sdir/$name.status" "$sdir/$name.meta"
+}
+
+# Reap idle `_done-*` orphan windows (finished dispatch, worktree gone). Safe
+# without --force: childless shell, no worktree left to inspect. Called from
+# plain `fleet prune` so leftovers do not accumulate across multi-day batches.
+reap_idle_done_orphans() {
+  local wid wname path live reason logical killed=0 sdir
+  sdir="$(dispatch_state_dir)"
+  while IFS=$'\t' read -r wid wname path live reason; do
+    [ -n "$wname" ] || continue
+    case "$wname" in _done-*) ;; *) continue ;; esac
+    [ "$live" = idle ] || continue
+    tmux kill-window -t "$wid" 2>/dev/null || true
+    logical="${wname#_done-}"
+    rm -f "$sdir/$logical.status" "$sdir/$logical.meta"
+    echo "  reap  $wname (idle _done- orphan, $reason)"
+    killed=$((killed + 1))
+  done < <(list_orphan_windows)
+  [ "$killed" -eq 0 ] || echo "[fleet] prune: $killed idle _done- orphan window(s) reaped."
 }
 
 # ---- orphan tmux windows (MAT-122) ----------------------------------------
