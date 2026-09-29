@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from fleet_common import (  # noqa: E402
     assert_not_legacy,
     barrier_files,
+    commits_ahead,
     parse_env,
     worker_stall_info,
 )
@@ -184,17 +185,6 @@ def uncommitted(path):
         if line.strip():
             return True
     return False
-
-
-def commits_ahead(path, base):
-    """Commits on this worker's branch above the project base — the deliverable
-    signal. A worker that finished (rc=0) with 0 commits and nothing uncommitted
-    is "done but empty-handed" (agent failed the task, not the fleet)."""
-    if not base:
-        return None
-    out = run(["git", "-C", path, "rev-list", "--count", base + "..HEAD"])
-    out = out.strip()
-    return int(out) if out.isdigit() else None
 
 
 def tmux_window_details(session):

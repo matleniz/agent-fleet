@@ -297,6 +297,89 @@ def load_worker_stall_info(
     )
 
 
+def commits_ahead(path, base):
+    """Commits on this worker's branch above the project base — the deliverable
+    signal. A worker that finished (rc=0) with 0 commits and nothing uncommitted
+    is "done but empty-handed" (agent failed the task, not the fleet)."""
+    if not base or not path or not os.path.isdir(path):
+        return None
+    out = _git_out(["git", "rev-list", "--count", f"{base}..HEAD"], path).strip()
+    return int(out) if out.isdigit() else None
+
+
+def get_pr_url(path, sdir=None, name=None):
+    """Best-effort retrieval of PR URL for a worker."""
+    if sdir and name:
+        pr_file = os.path.join(sdir, f"{name}.pr")
+        if os.path.isfile(pr_file):
+            try:
+                with open(pr_file) as fh:
+                    url = fh.read().strip()
+                if url:
+                    return url
+            except OSError:
+                pass
+    if path and os.path.isdir(path):
+        try:
+            r = subprocess.run(
+                ["gh", "pr", "view", "--json", "url", "-q", ".url"],
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if r.returncode == 0 and r.stdout.strip().startswith("http"):
+                return r.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+        out = _git_out(["git", "log", "-1", "--format=%B"], path)
+        m = re.search(r"https://github\.com/[^\s]+/pull/\d+", out)
+        if m:
+            return m.group(0)
+    return None
+
+
+def worker_wait_summary(path, status_file, meta_file=None, base=None):
+    """Structured summary for a worker on exit or wait check."""
+    status = ""
+    if status_file and os.path.isfile(status_file):
+        try:
+            with open(status_file) as fh:
+                status = fh.read().strip()
+        except OSError:
+            pass
+    name = (
+        os.path.basename(status_file)[:-7]
+        if status_file and status_file.endswith(".status")
+        else "worker"
+    )
+    sdir = os.path.dirname(status_file) if status_file else None
+    meta = parse_env(meta_file) if meta_file and os.path.isfile(meta_file) else {}
+    created_epoch = parse_created_epoch(meta.get("created"))
+    status_mtime = _mtime(status_file) if status_file else None
+    now = time.time()
+    end_time = (
+        status_mtime
+        if (status.startswith("done") and status_mtime is not None)
+        else now
+    )
+    duration = (
+        max(0, int(end_time - created_epoch))
+        if created_epoch is not None
+        else None
+    )
+
+    ca = commits_ahead(path, base)
+    pr = get_pr_url(path, sdir=sdir, name=name)
+    return {
+        "worker": name,
+        "status": status or "unknown",
+        "duration_sec": duration,
+        "commits": ca if ca is not None else 0,
+        "pr": pr or "none",
+    }
+
+
 def main():
     if len(sys.argv) < 2:
         return
@@ -313,6 +396,24 @@ def main():
 
         info = load_worker_stall_info(path, status_file, meta_file)
         print(json.dumps(info))
+        sys.exit(0)
+    elif cmd == "wait-summary":
+        base = sys.argv[5] if len(sys.argv) > 5 else None
+        as_json = "--json" in sys.argv
+        info = worker_wait_summary(path, status_file, meta_file, base)
+        if as_json:
+            import json
+
+            print(json.dumps(info))
+        else:
+            dur = (
+                f"{info['duration_sec']}s"
+                if info["duration_sec"] is not None
+                else "unknown"
+            )
+            print(
+                f"worker={info['worker']} status=\"{info['status']}\" duration={dur} commits={info['commits']} pr={info['pr']}"
+            )
         sys.exit(0)
 
 

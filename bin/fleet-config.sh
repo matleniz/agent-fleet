@@ -91,6 +91,12 @@ FLEET_DEF_ROUTE_MAX_DEPTH=2
 # shellcheck disable=SC2034
 FLEET_DEF_ROUTE_QUOTA_TTL_SEC=21600
 
+# Optional notification hook called by fleet wait on worker completion or stall
+# (args: <worker_name> <status> <exit_code>). Overridable via FLEET_NOTIFY_HOOK.
+FLEET_NOTIFY_HOOK="${FLEET_NOTIFY_HOOK:-}"
+# When 1, fleet wait also triggers NTFY_TOPIC notification on finish or stall.
+FLEET_WAIT_NOTIFY="${FLEET_WAIT_NOTIFY:-0}"
+
 # conversation-feedback routine (docs/04) — model + runner knobs. The routine is a
 # 3-stage pipeline: A extract (deterministic, no model), B compress (small model,
 # frequent, LOCAL — transcripts are private), C distill (strong model, rarer,
@@ -374,6 +380,10 @@ fleet_resolve_conf() {
   # fleet-status.py (child) and cmd_wait see the same value without re-parsing.
   WORKER_STALL_MINUTES="${WORKER_STALL_MINUTES:-$FLEET_DEF_WORKER_STALL_MINUTES}"
   export WORKER_STALL_MINUTES
+  FLEET_NOTIFY_HOOK="${FLEET_NOTIFY_HOOK:-}"
+  export FLEET_NOTIFY_HOOK
+  FLEET_WAIT_NOTIFY="${FLEET_WAIT_NOTIFY:-0}"
+  export FLEET_WAIT_NOTIFY
   export FLEET_CONF="$CONF"
 }
 

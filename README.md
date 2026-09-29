@@ -150,11 +150,13 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           #   detached tmux window; watch: fleet attach
    fleet dispatch --auto my-task "<task>"     # route worker pack:model from preferences
    fleet dispatch --difficulty easy my-task "fix typo"  # route by task difficulty
+   fleet dispatch --wait my-task "<task>" # dispatch and block in background to wake on exit
    fleet dispatch --model opus big "<task>"   # pick the worker's model (claude)
    fleet --machine vm dispatch my-task "<task>"  # headless worker ON the VM
    fleet route            # print pack:model chosen by task preferences (e.g. ROUTE_MEDIUM)
    fleet route --difficulty hard  # resolve route for hard difficulty
-   fleet wait my-task     # block until a dispatched worker finishes (rc 0/1; exits 3 on stall)
+   fleet wait my-task     # block until a dispatched worker finishes (rc 0/1; exits 3 on stall;
+                          #   prints parseable summary: duration, commits, pr; --json supported)
    fleet ls               # worktrees (session markers + [dispatch: done rc=N / running (stalled)]);
                           #   also lists orphan tmux windows (no worktree /
                           #   deleted pane path) — reap with prune --windows

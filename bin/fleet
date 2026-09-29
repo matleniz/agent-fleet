@@ -1219,14 +1219,15 @@ write_worker_meta() {  # <worker-name> <mode: dispatch|interactive>
   } > "$sdir/$name.meta"
 }
 
-cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--model M] <name> "<task>" [base]
-  local model="" taskfile_in="" auto="" difficulty="" kind="" escalate=""
+cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--wait] [--model M] <name> "<task>" [base]
+  local model="" taskfile_in="" auto="" difficulty="" kind="" escalate="" wait_after=0
   # Leading flags (dispatch's own; the global --machine is already parsed).
   # --task-file is the transport for remote dispatch (task shipped as a file so
   # multi-line prompts never fight ssh->docker->bash quoting); it is consumed
   # (deleted) after reading, same as _dispatch-run's taskfile.
   while :; do
     case "${1:-}" in
+      --wait)       wait_after=1; shift ;;
       --model)      [ $# -ge 2 ] || { echo "error: --model needs a value" >&2; exit 2; }; model="$2"; shift 2 ;;
       --task-file)  [ $# -ge 2 ] || { echo "error: --task-file needs a value" >&2; exit 2; }; taskfile_in="$2"; shift 2 ;;
       --auto)       auto=1; shift ;;
@@ -1339,6 +1340,11 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
     "$run; echo; echo '[worker $name exited — window kept for inspection; Ctrl-b & to close]'; exec bash"
   fleet_guard_unlock   # window exists now (S4) — safe to admit the next dispatch
   echo "dispatched: worker '$name' ($agent, headless${model:+, model=$model}) -> tmux $LT:$name"
+  if [ "$wait_after" -eq 1 ]; then
+    cmd_wait "$name"
+    return $?
+  fi
+  echo "  wake coordinator: run 'fleet wait $name' in background to wake on exit"
   echo "  monitor : fleet ls   ·   watch: fleet attach   ·   block: fleet wait $name"
 }
 
@@ -1419,7 +1425,11 @@ cmd_attach() {  # attach the local machine's tmux session (coordinator + workers
   session_attach
 }
 
-cmd_wait() {  # fleet wait [<name>] — block until dispatched worker(s) finish, then report
+cmd_wait() {  # fleet wait [--json] [<name>] — block until dispatched worker(s) finish, then report
+  local as_json=0
+  if [ "${1:-}" = "--json" ]; then
+    as_json=1; shift
+  fi
   local target="${1:-}" dir; dir="$(dispatch_state_dir)"
   [ -d "$dir" ] || { echo "no dispatched workers for '$PROJ_NAME'." >&2; return 0; }
   if [ -n "$target" ] && [ ! -f "$dir/$target.status" ]; then
@@ -1448,6 +1458,7 @@ cmd_wait() {  # fleet wait [<name>] — block until dispatched worker(s) finish,
     sleep "${FLEET_WAIT_POLL:-3}"
   done
   local worst=0
+  local json_items=()
   for f in "$dir"/*.status; do
     [ -e "$f" ] || continue
     n="$(basename "$f" .status)"
@@ -1463,12 +1474,36 @@ cmd_wait() {  # fleet wait [<name>] — block until dispatched worker(s) finish,
         fi
         ;;
       done\ rc=0) ;;
+      done-without-deliverable*)
+        [ "$worst" -lt 1 ] && worst=1
+        ;;
       done\ rc=*)
         [ "$worst" -lt 1 ] && worst=1
         ;;
     esac
-    printf '  %-18s %s\n' "$n" "$s"
+    local path="${WT_HOME:-}/$n"
+    local meta="$dir/$n.meta"
+    local summary
+    summary="$(python3 "$SELF_DIR/fleet_common.py" wait-summary "$path" "$f" "$meta" "${DEFAULT_BASE:-}" 2>/dev/null || echo "worker=$n status=\"$s\"")"
+    if [ "$as_json" -eq 1 ]; then
+      local json_data
+      json_data="$(python3 "$SELF_DIR/fleet_common.py" wait-summary "$path" "$f" "$meta" "${DEFAULT_BASE:-}" --json 2>/dev/null || echo "{}")"
+      json_items+=("$json_data")
+    else
+      printf '  %-18s %s\n' "$n" "$s"
+      printf '  summary: %s\n' "$summary"
+    fi
+    # Optional notification hook / topic on finish or stall
+    if [ -n "${FLEET_NOTIFY_HOOK:-}" ] && [ -x "${FLEET_NOTIFY_HOOK:-}" ]; then
+      "$FLEET_NOTIFY_HOOK" "$n" "$s" "$worst" >/dev/null 2>&1 || true
+    fi
+    if [ "${FLEET_WAIT_NOTIFY:-0}" = 1 ] && [ -n "${NTFY_TOPIC:-}" ]; then
+      "$NOTIFY" "$NTFY_TOPIC" "$n" "$s" >/dev/null 2>&1 || true
+    fi
   done
+  if [ "$as_json" -eq 1 ]; then
+    printf '[%s]\n' "$(IFS=,; echo "${json_items[*]}")"
+  fi
   return "$worst"
 }
 
@@ -1746,7 +1781,7 @@ case "$sub" in
   dispatch)      cmd_dispatch "$@" ;;
   _dispatch-run) cmd_dispatch_run "$@" ;;
   attach)        cmd_attach ;;
-  wait)          cmd_wait "${1:-}" ;;
+  wait)          cmd_wait "$@" ;;
   global)        cmd_global "$@" ;;
   r)           cmd_remote "$@" ;;
   ls)          cmd_ls ;;

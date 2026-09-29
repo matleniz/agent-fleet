@@ -237,7 +237,13 @@ monitoring the fleet need an automated signal rather than hanging indefinitely.
 - **Coordinator wake-up:** `fleet wait [<name>]` stops waiting as soon as a target
   worker stalls and exits with return code `3` (distinct from `0` on clean finish and `1`
   on worker error), allowing supervisors and dispatch scripts to trigger recovery or
-  fallback workflows instead of blocking forever.
+  fallback workflows instead of blocking forever. On exit, `fleet wait` outputs a
+  parseable summary (`summary: worker=... status=... duration=... commits=... pr=...`)
+  or structured JSON via `--json`. Running `fleet dispatch --wait <name> "<task>"` (or
+  launching `fleet wait <name>` in the background right after dispatch) allows agent
+  coordinators to be automatically re-invoked when the worker exits. An optional
+  `FLEET_NOTIFY_HOOK` executable receives `<worker_name> <status> <exit_code>` on completion,
+  and `FLEET_WAIT_NOTIFY=1` can forward events to `NTFY_TOPIC`.
 - **Progress recovery:** any file modification or git commit in the worker worktree
   immediately resets the activity age and clears the stalled flag.
 
