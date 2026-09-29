@@ -150,12 +150,12 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           #   detached tmux window; watch: fleet attach
    fleet dispatch --model opus big "<task>"   # pick the worker's model (claude)
    fleet --machine vm dispatch my-task "<task>"  # headless worker ON the VM
-   fleet wait my-task     # block until a dispatched worker finishes (rc)
-   fleet ls               # worktrees (session markers + [dispatch: done rc=N]);
+   fleet wait my-task     # block until a dispatched worker finishes (rc 0/1; exits 3 on stall)
+   fleet ls               # worktrees (session markers + [dispatch: done rc=N / running (stalled)]);
                           #   also lists orphan tmux windows (no worktree /
                           #   deleted pane path) — reap with prune --windows
-   fleet status           # the whole tree (machines/coordinator/workers/queue)
-   fleet status --json    # same, machine-readable (what a dashboard/UI consumes)
+   fleet status           # the whole tree (machines/coordinator/workers/queue, stall health)
+   fleet status --json    # same, machine-readable (stalled flag, activity age, stall threshold)
    fleet status --remote  # also gather VM sessions over ssh (default: local only)
    fleet context          # what an agent auto-reads at launch, per role + ~tokens
    fleet context --json --budget 3000  # machine-readable; exit non-zero if over budget
@@ -166,10 +166,11 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           #   its .env): auto-fixes apply mechanically, only residual
                           #   failures print; no-op if the project declares none
    fleet peek local hub   # dump a session's terminal   ·   fleet send local hub "y"
-   fleet del my-task      # remove one (guarded)  ·  fleet prune  = all merged ones
-                          #   fleet prune --windows  also reaps orphan tmux
-                          #   windows (no worktree / deleted pane path; live
-                          #   orphans need --force)
+   fleet del my-task      # remove one (guarded; also reaps leftover window when
+                          #   the worktree is already gone)  ·  fleet prune =
+                          #   all merged ones (+ auto-reaps idle `_done-*`
+                          #   orphan panes). fleet prune --windows  also reaps
+                          #   other orphan tmux windows (live ones need --force)
    fleet agents / doctor  # enabled packs / installed+logged status per pack
    fleet chats [<worker>] # per-pack pointer to the recorded conversation (read
                           #   to reprise a dead/other agent's session; not portable)
@@ -229,8 +230,12 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    admission gate has no runtime re-check, so on a constrained box also set
    `WORKER_NODE_MAX_MB` (a V8 heap cap that OOM-kills a leaking node worker
    cleanly), and note `fleet del`/`prune` now reap the worker's tmux window so
-   dead windows stop inflating the count. See
-   [docs/07](docs/07-machine-and-solo.md#resource-guard-rails-dont-oom-the-box).
+   dead windows stop inflating the count. Headless dispatches are supervised
+   against stalls (`WORKER_STALL_MINUTES`, default 20m, `0` = off): when a
+   running worker makes no progress (commits, index, dirty files) for that long,
+   `fleet ls` and `fleet status` flag it as stalled, and `fleet wait` unblocks
+   with exit code 3 so coordinators wake up promptly instead of waiting forever.
+   See [docs/07](docs/07-machine-and-solo.md#worker-health-stall-detection-and-watchdog-supervision).
 
 **Working solo is fine.** You do not need workers, a queue, or routines to
 benefit. One repo + one agent session + a hub adapted to your work already gives

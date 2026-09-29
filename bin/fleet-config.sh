@@ -65,6 +65,13 @@ FLEET_DEF_MAX_WORKER_WALL_SEC=0
 # guard floors). See docs/07-machine-and-solo.md.
 FLEET_DEF_WORKER_NODE_MAX_MB=0  # V8 old-space cap per node worker, MB (0 = off)
 
+# Stall detection for headless workers (fleet ls / status / wait). A running
+# dispatch with no worktree progress for this many minutes is flagged stalled
+# so coordinators wake up (fleet wait exits 3). 0 = detection off. Overridable
+# via WORKER_STALL_MINUTES in default.env or a project .env. Shared by the hung-
+# worker and supervision paths — not an admission-guard knob.
+FLEET_DEF_WORKER_STALL_MINUTES=20
+
 # conversation-feedback routine (docs/04) — model + runner knobs. The routine is a
 # 3-stage pipeline: A extract (deterministic, no model), B compress (small model,
 # frequent, LOCAL — transcripts are private), C distill (strong model, rarer,
@@ -343,6 +350,10 @@ fleet_resolve_conf() {
   # conf, so the project always wins. Never a place for a default project.
   [ -f "$FLEET_ROOT/default.env" ] && . "$FLEET_ROOT/default.env"
   . "$CONF"
+  # Stall threshold: project/default.env wins; else the built-in. Exported so
+  # fleet-status.py (child) and cmd_wait see the same value without re-parsing.
+  WORKER_STALL_MINUTES="${WORKER_STALL_MINUTES:-$FLEET_DEF_WORKER_STALL_MINUTES}"
+  export WORKER_STALL_MINUTES
   export FLEET_CONF="$CONF"
 }
 

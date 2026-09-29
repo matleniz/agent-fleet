@@ -13,6 +13,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 
 # --- .env parsing -----------------------------------------------------------
 _ASSIGN = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -118,3 +120,201 @@ def barrier_files(pdir=None):
             if line:
                 files.add(line)
     return files
+
+
+# --- worker stall / activity (shared by fleet-status + fleet wait/ls) --------
+# Progress signal for a running headless worker: worktree commits / index /
+# dirty-file mtimes, anchored at dispatch created/status time. Pane chatter
+# alone does NOT reset the clock (a hung CLI retrying a network drop, or an
+# agent blocked on a foreground dev server, keeps printing without progressing).
+# WORKER_STALL_MINUTES (default 20; 0 = off) is the shared threshold.
+
+
+def stall_threshold_sec(env=None):
+    """Seconds of no worktree progress before a running worker is stalled.
+
+    Reads WORKER_STALL_MINUTES from the project env dict, else the process
+    environment, else 20. 0 (or negative) disables detection.
+    """
+    env = env or {}
+    raw = env.get("WORKER_STALL_MINUTES")
+    if raw is None or raw == "":
+        raw = os.environ.get("WORKER_STALL_MINUTES", "20")
+    try:
+        minutes = float(raw)
+    except (TypeError, ValueError):
+        minutes = 20.0
+    if minutes <= 0:
+        return 0
+    return int(minutes * 60)
+
+
+def _mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+def _git_out(args, cwd):
+    try:
+        env = dict(os.environ)
+        env["GIT_OPTIONAL_LOCKS"] = "0"
+        r = subprocess.run(
+            args, cwd=cwd, capture_output=True, text=True, timeout=10, env=env
+        )
+        return r.stdout if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def parse_created_epoch(created):
+    """Parse meta `created` (ISO-8601 UTC, trailing Z) to a unix epoch."""
+    if not created:
+        return None
+    s = created.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(s).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def worktree_activity_epoch(path, created_epoch=None, status_mtime=None):
+    """Best-effort unix epoch of last worktree *progress* for a worker.
+
+    Cheap signals only (no full-tree walk): dispatch created/status mtime,
+    `.git/index` mtime, dirty-path mtimes from `git status --porcelain` (capped),
+    and HEAD commit time when it is at/after created (so a shared base tip does
+    not look like fresh progress on a brand-new worktree).
+    """
+    candidates = []
+    if created_epoch is not None:
+        candidates.append(float(created_epoch))
+    if status_mtime is not None:
+        candidates.append(float(status_mtime))
+    if not path or not os.path.isdir(path):
+        return max(candidates) if candidates else None
+
+    git_dir = os.path.join(path, ".git")
+    if os.path.isfile(git_dir):
+        # linked worktree: .git is a file; index lives under the common git dir
+        try:
+            with open(git_dir) as fh:
+                line = fh.readline().strip()
+            if line.startswith("gitdir:"):
+                real = line.split(":", 1)[1].strip()
+                if not os.path.isabs(real):
+                    real = os.path.normpath(os.path.join(path, real))
+                idx = _mtime(os.path.join(real, "index"))
+                if idx is not None:
+                    candidates.append(idx)
+        except OSError:
+            pass
+    else:
+        idx = _mtime(os.path.join(path, ".git", "index"))
+        if idx is not None:
+            candidates.append(idx)
+
+    anchor = created_epoch if created_epoch is not None else status_mtime
+    out = _git_out(["git", "log", "-1", "--format=%ct"], path).strip()
+    if out.isdigit():
+        commit_ts = float(out)
+        if anchor is None or commit_ts >= float(anchor) - 60:
+            candidates.append(commit_ts)
+
+    porcelain = _git_out(["git", "status", "--porcelain", "-uall"], path)
+    barrier = barrier_files()
+    n = 0
+    for line in porcelain.splitlines():
+        if n >= 40:
+            break
+        if len(line) < 4:
+            continue
+        rel = line[3:]
+        if " -> " in rel:
+            rel = rel.split(" -> ", 1)[-1]
+        rel = rel.strip().strip('"')
+        if line.startswith("?? ") and rel in barrier:
+            continue
+        mt = _mtime(os.path.join(path, rel))
+        if mt is not None:
+            candidates.append(mt)
+            n += 1
+    return max(candidates) if candidates else None
+
+
+def worker_stall_info(path, dispatch_status, created=None, status_mtime=None, env=None, now=None):
+    """Return activity/stall fields for one worker (or None fields when N/A).
+
+    Stall applies only while dispatch_status starts with 'running'.
+    """
+    threshold = stall_threshold_sec(env)
+    created_epoch = parse_created_epoch(created)
+    activity = worktree_activity_epoch(path, created_epoch, status_mtime)
+    now = time.time() if now is None else float(now)
+    age = None if activity is None else max(0, int(now - activity))
+    running = bool(dispatch_status) and str(dispatch_status).startswith("running")
+    stalled = bool(
+        running and threshold > 0 and activity is not None and age is not None and age >= threshold
+    )
+    return {
+        "last_activity": (
+            None
+            if activity is None
+            else datetime.fromtimestamp(activity, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ),
+        "activity_age_sec": age,
+        "stall_threshold_sec": threshold,
+        "stalled": stalled,
+    }
+
+
+def load_worker_stall_info(
+    path, status_file, meta_file=None, env=None, now=None
+):
+    """Load worker status and metadata, returning worker_stall_info."""
+    status = ""
+    if status_file and os.path.isfile(status_file):
+        try:
+            with open(status_file) as fh:
+                status = fh.read().strip()
+        except OSError:
+            pass
+    created = None
+    if meta_file and os.path.isfile(meta_file):
+        meta = parse_env(meta_file)
+        created = meta.get("created")
+    status_mtime = _mtime(status_file) if status_file else None
+    return worker_stall_info(
+        path,
+        status,
+        created=created,
+        status_mtime=status_mtime,
+        env=env,
+        now=now,
+    )
+
+
+def main():
+    if len(sys.argv) < 2:
+        return
+    cmd = sys.argv[1]
+    path = sys.argv[2] if len(sys.argv) > 2 else ""
+    status_file = sys.argv[3] if len(sys.argv) > 3 else ""
+    meta_file = sys.argv[4] if len(sys.argv) > 4 else None
+
+    if cmd == "check-stall":
+        info = load_worker_stall_info(path, status_file, meta_file)
+        sys.exit(0 if info["stalled"] else 1)
+    elif cmd == "stall-info":
+        import json
+
+        info = load_worker_stall_info(path, status_file, meta_file)
+        print(json.dumps(info))
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
