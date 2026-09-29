@@ -251,6 +251,13 @@ does not cover. All four are usage discipline, not fleet code:
   and used only when explicitly listed).
   To protect rare frontier tokens, `ROUTE_CLAUDE=escalate-only` reserves Claude for the
   coordinator unless an explicit escalation path is taken (`ROUTE_ESCALATE`).
+  Which `claude:<model>` entries are usable as **dispatched workers**: `claude:sonnet`,
+  `claude:opus` and bare `claude` (account default) run headless in auto mode;
+  `claude:haiku` (or any `claude-haiku-*` id) does not — auto mode is unavailable on
+  Haiku, so the pack fails fast (rc 2, reason recorded) rather than stall on a
+  permission prompt. Do not list it in `ROUTE_*` for dispatch. A dispatch that ends
+  rc=0 with no commit and a clean tree is flagged `[no changes]` in `fleet ls` /
+  `fleet wait`, whatever the pack.
   If a candidate pack encounters a quota error (detected automatically by `_dispatch-run`
   when a non-zero exit matches `pack_quota_pattern` declared by the pack, or manually via
   `fleet route --quota-exceeded <pack>`), fleet writes an active ledger in

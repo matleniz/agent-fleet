@@ -269,7 +269,8 @@ monitoring the fleet need an automated signal rather than hanging indefinitely.
   on worker error), allowing supervisors and dispatch scripts to trigger recovery or
   fallback workflows instead of blocking forever. On exit, `fleet wait` outputs a
   parseable summary (`summary: worker=... status=... duration=... commits=... pr=...`)
-  or structured JSON via `--json`. Running `fleet dispatch --wait <name> "<task>"` (or
+  or structured JSON via `--json`; a worker that exited rc=0 with zero commits and a
+  clean worktree gets a `[no changes]` advisory (JSON: `"empty": true`), also shown by `fleet ls`. Running `fleet dispatch --wait <name> "<task>"` (or
   launching `fleet wait <name>` in the background right after dispatch) allows agent
   coordinators to be automatically re-invoked when the worker exits. An optional
   `FLEET_NOTIFY_HOOK` executable receives `<worker_name> <status> <exit_code>` on completion,

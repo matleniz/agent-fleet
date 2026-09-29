@@ -100,7 +100,12 @@ silently downgraded to prompting (so every write auto-denies in headless), while
 auto mode — autonomous with a server-side classifier gating each action — is left
 untouched by that policy. Headless auto mode aborts if the classifier blocks
 repeatedly (no human to approve), so classifier-tripping work belongs in an
-interactive `fleet w` session. See `packs/claude/pack.sh`.
+interactive `fleet w` session. Auto mode is **not available on Haiku**: under
+`claude -p` a Haiku session silently falls back to prompting, every write is
+denied and the run still exits rc=0. `pack_launch_headless` therefore refuses a
+`haiku` model (alias or full id) up front — non-zero rc and the reason on stderr
+(visible via `fleet peek`) — instead of a silent false success; sonnet, opus and
+the account default are unchanged. See `packs/claude/pack.sh`.
 
 That failure mode is silent — a wrongly-gated box accepts a dispatch, writes
 nothing, and exits `rc=0`. To confirm a box (or a fresh VM) can actually write

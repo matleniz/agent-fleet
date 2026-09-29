@@ -68,6 +68,20 @@ pack_launch() {
   exec claude --permission-mode auto "${FLEET_MCP_FLAGS[@]}" "${resume[@]}"
 }
 
+# Auto mode is not available to Haiku models (verified against claude 2.1.284,
+# `--model haiku` and the full `claude-haiku-*` id alike): the session silently
+# falls back to prompting, and under `-p` nobody can answer, so every write or
+# shell call is denied while the run still exits rc=0 — a false success. Refuse
+# up front (non-zero, reason on stderr → the dispatch pane / `fleet peek`)
+# instead. A missing/empty model (account default) and every other model pass.
+_claude_require_auto_capable() {  # <model or "">
+  case "$1" in
+    *[Hh]aiku*)
+      echo "error: claude model '$1' cannot run headless under --permission-mode auto (auto mode is unavailable on Haiku; the worker would stall on a permission prompt nobody can answer). Use sonnet or opus for dispatched workers." >&2
+      return 1 ;;
+  esac
+}
+
 # Headless launch for `fleet dispatch`: run one task non-interactively in the same
 # AUTO mode as pack_launch, so the worker has shell/tool access. Caveat: with no
 # human to approve, a repeated classifier block (3x in a row / 20x total) aborts
@@ -76,6 +90,7 @@ pack_launch() {
 # $2 (optional): the model for this worker, from `fleet dispatch --model` (else
 # the account default). --model is a real claude flag (verified against v2.1.x).
 pack_launch_headless() {
+  _claude_require_auto_capable "${2:-}" || exit 2
   pack_claude_subagent_model
   fleet_node_heap_guard
   _claude_mcp_flags
