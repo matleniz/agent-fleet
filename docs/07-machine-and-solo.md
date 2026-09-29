@@ -234,6 +234,10 @@ monitoring the fleet need an automated signal rather than hanging indefinitely.
   `npm run dev`, `uvicorn`, `--watch` modes) are tracked across child process trees; workers
   waiting on such processes are surfaced as `blocked-on-foreground-process`. Workers are also
   instructed up front via prompt guidance to launch servers in the background.
+  *Matching rule:* only a process's executable and its first six arguments are matched, cut
+  before any free-text flag (`-p`, `--print`, `--prompt`, `--append-system-prompt`, `-c`, `-e`,
+  `--eval`), so a headless worker's own prompt (which itself cites `npm run dev`, `vite`, ...)
+  never counts; real server children (and `--watch` among their first arguments) do.
 - **Reporting:** `fleet ls` surfaces stalled workers as `[dispatch: running (stalled)]` and
   blocking servers as `[dispatch: blocked-on-foreground-process (<server>)]`.
   `fleet status` exposes `stalled: true`, `child_processes`, `blocked_on_server`, `last_activity`,
