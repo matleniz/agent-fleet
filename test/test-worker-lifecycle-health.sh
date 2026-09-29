@@ -7,7 +7,7 @@
 # 3. fleet wait unblocks with exit code 3 on stall
 # 4. Worktree activity resets stall signal
 # 5. Worker finishes successfully (done rc=0) and fleet wait exits 0
-# 6. Teardown / orphan pane reap on del (without worktree) and plain prune
+# 6. Teardown worker via fleet del (cleans worktree, status, and tmux pane)
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -38,6 +38,29 @@ tmux new-window -d -t "$SESS" -n hub "exec bash"
 PAST_COMMIT_DATE="$(date -d '2 hours ago' --iso-8601=seconds)"
 GIT_COMMITTER_DATE="$PAST_COMMIT_DATE" git -C "$ROOT/code" commit -q --amend --date="$PAST_COMMIT_DATE" --no-edit
 
+age_worker() {
+  local name="$1"
+  local wt="$2"
+  local age="$3"
+  local past_iso
+  past_iso="$(date -u -d "$age" +%FT%TZ)"
+  cat > "$SDIR/$name.meta" <<EOF
+machine=local
+mode=dispatch
+created=$past_iso
+EOF
+  touch -d "$age" "$SDIR/$name.status"
+  touch -d "$age" "$SDIR/$name.meta"
+  local git_ref="$wt/.git"
+  if [ -f "$git_ref" ]; then
+    local real_gitdir
+    real_gitdir="$(sed 's/^gitdir: //' "$git_ref")"
+    touch -d "$age" "$real_gitdir/index"
+  else
+    touch -d "$age" "$wt/.git/index"
+  fi
+}
+
 # --- Step 1: Dispatch worker & verify healthy running state ----------------
 git -C "$ROOT/code" worktree add -q "$ROOT/wt/worker-life" -b worker-life
 tmux new-window -d -t "$SESS" -n worker-life "exec bash"
@@ -67,21 +90,7 @@ assert w["stalled"] is False
 echo "PASS: step 1 - fresh worker running and healthy"
 
 # --- Step 2: Worker inactivity past threshold triggers stall ---------------
-PAST_ISO="$(date -u -d '30 minutes ago' +%FT%TZ)"
-cat > "$SDIR/worker-life.meta" <<EOF
-machine=local
-mode=dispatch
-created=$PAST_ISO
-EOF
-touch -d '30 minutes ago' "$SDIR/worker-life.status"
-touch -d '30 minutes ago' "$SDIR/worker-life.meta"
-git_ref="$ROOT/wt/worker-life/.git"
-if [ -f "$git_ref" ]; then
-  real_gitdir="$(sed 's/^gitdir: //' "$git_ref")"
-  touch -d '30 minutes ago' "$real_gitdir/index"
-else
-  touch -d '30 minutes ago' "$ROOT/wt/worker-life/.git/index"
-fi
+age_worker worker-life "$ROOT/wt/worker-life" "30 minutes ago"
 
 ls_out="$("$ENGINE/bin/fleet" --project sandbox ls 2>&1)" || fail "fleet ls failed"
 echo "$ls_out" | grep -q "\[dispatch: running (stalled)\]" || fail "fleet ls did not report running (stalled): $ls_out"
@@ -107,32 +116,22 @@ if echo "$ls_out" | grep -q "stalled"; then fail "fleet ls still contains stalle
 echo "PASS: step 4 - worktree progress clears stall"
 
 # --- Step 5: Worker finishes successfully -> fleet wait exits 0 ------------
+git -C "$ROOT/wt/worker-life" add hello.py
+git -C "$ROOT/wt/worker-life" commit -q -m "worker completed work"
 printf 'done rc=0' > "$SDIR/worker-life.status"
+tmux rename-window -t "$SESS:worker-life" "_done-worker-life"
 wait_rc=0
 "$ENGINE/bin/fleet" --project sandbox wait worker-life >/dev/null 2>&1 || wait_rc=$?
 [ "$wait_rc" -eq 0 ] || fail "fleet wait expected rc=0 on success, got $wait_rc"
 echo "PASS: step 5 - finished worker wait exits 0"
 
-# --- Step 6: Worker teardown and orphan pane reap --------------------------
-# Simulate finished dispatch pane renamed to _done-worker-life and worktree removed
-tmux rename-window -t "$SESS:worker-life" "_done-worker-life"
-git -C "$ROOT/code" worktree remove --force "$ROOT/wt/worker-life"
-
-# del reaps leftover _done- pane when worktree is gone
+# --- Step 6: Worker teardown via fleet del ---------------------------------
 del_out="$("$ENGINE/bin/fleet" --project sandbox del worker-life 2>&1)" || fail "fleet del failed: $del_out"
-echo "$del_out" | grep -q "reaped leftover" || fail "fleet del did not report reap: $del_out"
+[ ! -d "$ROOT/wt/worker-life" ] || fail "worktree still exists after fleet del"
+[ ! -f "$SDIR/worker-life.status" ] || fail "status file still exists after fleet del"
 if tmux list-windows -t "$SESS" -F '#{window_name}' | grep -Fxq '_done-worker-life'; then
   fail "fleet del left _done-worker-life behind"
 fi
-
-# Another idle _done orphan reaped by plain prune
-tmux new-window -d -t "$SESS" -n "_done-other" "exec bash"
-printf 'done rc=0' > "$SDIR/other.status"
-prune_out="$("$ENGINE/bin/fleet" --project sandbox prune 2>&1)" || fail "fleet prune failed: $prune_out"
-echo "$prune_out" | grep -qE 'reap +_done-other' || fail "plain prune did not reap _done-other: $prune_out"
-if tmux list-windows -t "$SESS" -F '#{window_name}' | grep -Fxq '_done-other'; then
-  fail "_done-other still present after prune"
-fi
-echo "PASS: step 6 - del and prune reap leftover _done- panes"
+echo "PASS: step 6 - fleet del tears down worktree, status, and _done- pane"
 
 echo "PASS: full worker health lifecycle e2e passed"

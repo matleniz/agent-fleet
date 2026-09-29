@@ -176,8 +176,6 @@ def parse_created_epoch(created):
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
     try:
-        from datetime import datetime
-
         return datetime.fromisoformat(s).timestamp()
     except (TypeError, ValueError):
         return None
@@ -273,56 +271,47 @@ def worker_stall_info(path, dispatch_status, created=None, status_mtime=None, en
     }
 
 
-def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "check-stall":
-        # Usage: fleet_common.py check-stall <path> <status-file> [meta-file]
-        path = sys.argv[2] if len(sys.argv) > 2 else ""
-        status_file = sys.argv[3] if len(sys.argv) > 3 else ""
-        meta_file = sys.argv[4] if len(sys.argv) > 4 else None
-        if not os.path.isfile(status_file):
-            sys.exit(1)
+def load_worker_stall_info(
+    path, status_file, meta_file=None, env=None, now=None
+):
+    """Load worker status and metadata, returning worker_stall_info."""
+    status = ""
+    if status_file and os.path.isfile(status_file):
         try:
             with open(status_file) as fh:
                 status = fh.read().strip()
         except OSError:
-            sys.exit(1)
-        if not status.startswith("running"):
-            sys.exit(1)
-        created = None
-        if meta_file and os.path.isfile(meta_file):
-            meta = parse_env(meta_file)
-            created = meta.get("created")
-        status_mtime = _mtime(status_file)
-        info = worker_stall_info(
-            path,
-            status,
-            created=created,
-            status_mtime=status_mtime,
-        )
+            pass
+    created = None
+    if meta_file and os.path.isfile(meta_file):
+        meta = parse_env(meta_file)
+        created = meta.get("created")
+    status_mtime = _mtime(status_file) if status_file else None
+    return worker_stall_info(
+        path,
+        status,
+        created=created,
+        status_mtime=status_mtime,
+        env=env,
+        now=now,
+    )
+
+
+def main():
+    if len(sys.argv) < 2:
+        return
+    cmd = sys.argv[1]
+    path = sys.argv[2] if len(sys.argv) > 2 else ""
+    status_file = sys.argv[3] if len(sys.argv) > 3 else ""
+    meta_file = sys.argv[4] if len(sys.argv) > 4 else None
+
+    if cmd == "check-stall":
+        info = load_worker_stall_info(path, status_file, meta_file)
         sys.exit(0 if info["stalled"] else 1)
-    elif len(sys.argv) > 1 and sys.argv[1] == "stall-info":
+    elif cmd == "stall-info":
         import json
-        path = sys.argv[2] if len(sys.argv) > 2 else ""
-        status_file = sys.argv[3] if len(sys.argv) > 3 else ""
-        meta_file = sys.argv[4] if len(sys.argv) > 4 else None
-        status = ""
-        if os.path.isfile(status_file):
-            try:
-                with open(status_file) as fh:
-                    status = fh.read().strip()
-            except OSError:
-                pass
-        created = None
-        if meta_file and os.path.isfile(meta_file):
-            meta = parse_env(meta_file)
-            created = meta.get("created")
-        status_mtime = _mtime(status_file)
-        info = worker_stall_info(
-            path,
-            status,
-            created=created,
-            status_mtime=status_mtime,
-        )
+
+        info = load_worker_stall_info(path, status_file, meta_file)
         print(json.dumps(info))
         sys.exit(0)
 
