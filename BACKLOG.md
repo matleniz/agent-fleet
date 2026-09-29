@@ -23,9 +23,11 @@ honors `--machine` after the subcommand; see `test/dispatch.sh` layer 4b.)_
 
 ## Small builds (one session each)
 
-- **`fleet race <task>`** — same task fanned to N worktrees (optionally N
-  different packs), then a judge session compares and recommends; human
-  decides (LLM judges have a documented selection gap, arxiv 2603.12520).
+- **`fleet race <task>`** — SHIPPED (`fleet race run|judge|comment|steer`, docs/06):
+  same task fanned to N worktrees (optionally N different packs), a judge pass
+  compares and recommends, markdown review comments are re-dispatched to the
+  losing worktrees; human decides (LLM judges have a documented selection gap,
+  arxiv 2603.12520). Original idea:
   Proof: Cursor 2.2 multi-agent judging; DIY worktree fan-outs.
   https://forum.cursor.com/t/cursor-2-2-multi-agent-judging/145826
 - **Quality gates at merge time** — SHIPPED as `fleet gate` (2026-07-20), a

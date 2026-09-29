@@ -117,6 +117,74 @@ structured `gate-escalate` event in the project's `events.log`. The gate exits n
 to re-dispatch or hand off — it does not silently spawn unapproved workers behind the
 scenes.
 
+## Headless review passes: judge, race, fan-in
+
+Three opt-in features share ONE primitive, `fleet_pass` (`bin/fleet-pass.sh`): a
+fresh, non-interactive model run launched through the pack's existing
+`pack_launch_headless <prompt> <model>` — the same entry point `fleet dispatch`
+and the conversation-feedback distill use, so there is no new pack contract. The
+primitive picks pack:model through the router (`fleet route --difficulty hard
+--kind <kind>`: `ROUTE_KIND_JUDGE` / `ROUTE_KIND_RACE_JUDGE` / `ROUTE_KIND_FANIN`
+override `ROUTE_HARD`; quota fall-through and `ROUTE_CLAUDE` apply, so a pass
+never defaults to claude), bounds the run (`PASS_TIMEOUT`, default 900 s), records
+a quota-exhausted pack in the quota ledger, and flags a pass that touched the
+worktree (the prompt tells it not to; the check makes a violation visible).
+`--with <pack[:model]>` overrides the router for one call. A pass skips the
+admission guard (it is short-lived and read-only) and ignores the dispatch depth
+limit (it dispatches nothing).
+
+- **`fleet judge`** (also `fleet gate --review`, or `GATE_REVIEW=1`): after the
+  deterministic checks pass, one fresh pass — no shared context with the author —
+  reads the diff against the task (recorded dispatch task, `--task`, or commit
+  subjects) and prints findings plus `VERDICT: APPROVE|CONCERNS`. **Advisory**: it
+  never changes the gate's exit code and never files anything (a false positive
+  must not silently block a PR); a pass that cannot run is reported as "not
+  judged". Notes are kept in the dispatch state dir as `<worker>.judge.md`.
+- **`fleet race`**: `fleet race run --packs "cursor copilot" <race> "<task>"` fans one
+  task to N (2–6) worktrees `<race>-a`, `<race>-b`, … through `fleet dispatch`.
+  Once they finish (`fleet wait`), `fleet race judge <race>` runs a judge pass that
+  recommends a winner and drafts markdown review comments for each loser (files in
+  `dispatch/<project>/race/<race>/comments/`). LLM judges have a documented
+  selection gap, so it is a recommendation — you decide. Add or edit comments with
+  `fleet race comment <race> <worktree> [file|-]`, then `fleet race steer <race>
+  --all [--toward <winner>]` re-sends each worktree's comments as a follow-up
+  prompt through the same dispatch path to that worktree's own pack (the branch
+  already holds its earlier commits; `--toward` also shows the winner's diff).
+  Iterate: `wait` → `judge` → `steer`. Sent comments are archived
+  (`<worktree>.sent-<round>.md`) and each round is logged in `events.log`.
+- **`fleet fanin`** (optional, never default): a lead pass folds K finished
+  workers (`--group K`, default 4) into one structured line each plus a
+  `NEEDS-HUMAN:` list, so the coordinator reads one report
+  (`dispatch/<project>/fanin/latest.md`) instead of N. A lead pass that fails
+  degrades to that group's raw digests — nothing is lost. `--dry-run` plans without
+  calling a model. Each run appends a measurement row to `fanin/measure.tsv`.
+
+### Fan-in: where it pays (measured, honestly)
+
+What the hub would read without fan-in is the per-worker digest (status, task head
+≤300 chars, commits, diffstat — `fanin_digest`). Measured on this repo's last 12
+merged PRs (each one a worker's result): **~205 tokens per worker on average**
+(range 132–299, 1 token ≈ 4 bytes). A lead line is capped at ~25 + 15 words:
+~27 tokens for a typical line, ~61 at the cap (estimated from the format; the lead
+model's real output was not measured). Hub tokens, N workers:
+
+| N | direct read | fan-in report (typical / cap) |
+|---|---|---|
+| 6 (default cap) | ~1.2k | ~0.2k / ~0.4k |
+| 16 | ~3.3k | ~0.5k / ~1.0k |
+| 50 | ~10.3k | ~1.4k / ~3.1k |
+
+Reading it: in *hub* tokens fan-in is ahead from N=2 on paper, but at N ≤ 6 it saves
+about 1k tokens — less than one file read — and in *total* tokens it never wins: the
+lead passes re-read every digest (≈ N × 205 in) and write ≈ N × 27–61 out, on top of
+what the hub still reads. It also adds a serial hop of latency and a lossy summary a
+tired reviewer may trust too much. The saving only becomes material (≳ 5k hub
+tokens, ≈ 24+ workers) beyond the default cap of 6, i.e. for large-N runs
+(`MAX_WORKERS` raised, or several batches). **Do not enable it below that**; the
+crossover is a prediction from digest sizes, not a live-model measurement —
+`measure.tsv` records `hub_direct` / `hub_fanin` / `lead_in` / `lead_out` per real
+run so the number can be corrected. Prototype: one level of grouping only.
+
 ## Operational levers checklist
 
 State-of-the-art practice (checked mid-2026) adds four levers the model above
