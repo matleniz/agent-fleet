@@ -152,6 +152,39 @@ limit (it dispatches nothing).
   already holds its earlier commits; `--toward` also shows the winner's diff).
   Iterate: `wait` → `judge` → `steer`. Sent comments are archived
   (`<worktree>.sent-<round>.md`) and each round is logged in `events.log`.
+- **`fleet fanin`** (optional, never default): a lead pass folds K finished
+  workers (`--group K`, default 4) into one structured line each plus a
+  `NEEDS-HUMAN:` list, so the coordinator reads one report
+  (`dispatch/<project>/fanin/latest.md`) instead of N. A lead pass that fails
+  degrades to that group's raw digests — nothing is lost. `--dry-run` plans without
+  calling a model. Each run appends a measurement row to `fanin/measure.tsv`.
+
+### Fan-in: where it pays (measured, honestly)
+
+What the hub would read without fan-in is the per-worker digest (status, task head
+≤300 chars, commits, diffstat — `fanin_digest`). Measured on this repo's last 12
+merged PRs (each one a worker's result): **~205 tokens per worker on average**
+(range 132–299, 1 token ≈ 4 bytes). A lead line is capped at ~25 + 15 words:
+~27 tokens for a typical line, ~61 at the cap (estimated from the format; the lead
+model's real output was not measured). Hub tokens, N workers:
+
+| N | direct read | fan-in report (typical / cap) |
+|---|---|---|
+| 6 (default cap) | ~1.2k | ~0.2k / ~0.4k |
+| 16 | ~3.3k | ~0.5k / ~1.0k |
+| 50 | ~10.3k | ~1.4k / ~3.1k |
+
+Reading it: in *hub* tokens fan-in is ahead from N=2 on paper, but at N ≤ 6 it saves
+about 1k tokens — less than one file read — and in *total* tokens it never wins: the
+lead passes re-read every digest (≈ N × 205 in) and write ≈ N × 27–61 out, on top of
+what the hub still reads. It also adds a serial hop of latency and a lossy summary a
+tired reviewer may trust too much. The saving only becomes material (≳ 5k hub
+tokens, ≈ 24+ workers) beyond the default cap of 6, i.e. for large-N runs
+(`MAX_WORKERS` raised, or several batches). **Do not enable it below that**; the
+crossover is a prediction from digest sizes, not a live-model measurement —
+`measure.tsv` records `hub_direct` / `hub_fanin` / `lead_in` / `lead_out` per real
+run so the number can be corrected. Prototype: one level of grouping only.
+
 ## Operational levers checklist
 
 State-of-the-art practice (checked mid-2026) adds four levers the model above

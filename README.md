@@ -181,6 +181,8 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet race run --packs "a b" r1 "<task>"   # same task in N worktrees; then
                           #   `fleet race judge r1`, `fleet race comment r1 r1-b f.md`,
                           #   `fleet race steer r1 --all` re-dispatches review comments
+   fleet fanin --group 4  # OPTIONAL lead pass: one report for N finished workers
+                          #   (only worth it for large N — see docs/06)
    fleet peek local hub   # dump a session's terminal   ·   fleet send local hub "y"
    fleet del my-task      # remove one (guarded; also reaps leftover window when
                           #   the worktree is already gone)  ·  fleet prune =

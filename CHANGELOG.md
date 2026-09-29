@@ -11,13 +11,15 @@ Unreleased until the first one.
 ## [Unreleased]
 
 ### Added
-- Shared headless review/aggregation primitive (`fleet_pass`, `bin/fleet-pass.sh`)
-  over the existing `pack_launch_headless`, routed through
-  `fleet route --difficulty hard --kind <kind>` (never claude by default), and its
-  first users: `fleet judge` / `fleet gate --review` / `GATE_REVIEW=1` (advisory
-  post-gate diff review) and `fleet race` (`run|ls|judge|comment|steer`: one task
-  in N worktrees, a judge pass, markdown review comments re-dispatched to the
-  losers). Tests: `test-judge-e2e.sh`, `test-race-e2e.sh`.
+- One shared headless review/aggregation primitive (`fleet_pass`,
+  `bin/fleet-pass.sh`) over the existing `pack_launch_headless`, routed through
+  `fleet route --kind <kind>` (never claude by default), and three opt-in
+  features built on it, none default-on: `fleet judge` / `fleet gate --review` /
+  `GATE_REVIEW=1` (advisory post-gate diff review), `fleet race`
+  (`run|ls|judge|comment|steer`: N-worktree race, judge, review comments
+  re-dispatched to the losers), and `fleet fanin` (optional lead-pass fan-in,
+  with a documented crossover measurement). Tests: `test/test-judge-e2e.sh`,
+  `test-race-e2e.sh`, `test-fanin-e2e.sh`, `test-pipeline-e2e.sh`.
 
 ### Fixed
 - `fleet del <name>` reaps leftover `<name>` / `_done-<name>` panes and dispatch
