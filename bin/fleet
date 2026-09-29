@@ -39,14 +39,17 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
   (no subcommand)      launch/resume the COORDINATOR in the project's docs hub
                        (in tmux; --machine picks where, default: local)
   w <name> [base]      create/reopen a worker worktree + launch the agent (tmux)
-  dispatch [--model M] <name> "<task>" [base]
+  dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--model M] <name> "<task>" [base]
                        headless worker in a detached tmux window (for an
                        agent-coordinator): create/reopen the worktree, run the
                        task non-interactively. --machine M dispatches on a VM
-                       (delegated to its container). --model M picks the worker
-                       model (packs that support it). Monitor: fleet attach / ls
-                       (w and dispatch refuse when the target machine is at its
-                       worker/RAM/disk limit; --force skips the guard)
+                       (delegated to its container). --auto routes pack+model via
+                       configurable preferences (--difficulty D, --kind K, --escalate).
+                       --model M picks the worker model explicitly. Monitor:
+                       fleet attach / ls (w and dispatch refuse when the target
+                       machine is at its limit; --force skips the guard)
+  route [--difficulty D] [--kind K] [--escalate] [--task T]
+                       print pack:model chosen by task routing preferences
   attach               attach the local machine's tmux session (all its windows)
   wait [<name>]        block until dispatched worker(s) finish, then report rc
   machines             the project's machines (selected + registry pool)
@@ -124,7 +127,7 @@ if [ -z "$sub" ]; then
       case "${1:-}" in -h|--help|"") exec "$SELF_DIR/fleet-init" ;; esac
       exec "$SELF_DIR/fleet-init" "$@" ;;
     ""|hub) sub="hub"; [ $# -gt 0 ] && shift ;;
-    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|chats|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|feedback|peek|send|_dispatch-run)
+    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|chats|doctor|sync-remote|dispatch|attach|wait|global|machines|status|context|feedback|peek|send|route|_dispatch-run)
       sub="$1"; [ "$sub" = worker ] && sub=w; [ "$sub" = remote ] && sub=r; shift ;;
     -*) echo "error: unknown option '$1'" >&2; exit 2 ;;
     *)
@@ -137,12 +140,18 @@ fi
 
 # `global` (per-user instructions) and `feedback` (the machine-wide seen ledger,
 # spanning every project) are machine-wide, not per-project — like `init`, they
-# resolve no project.
+# resolve no project. `route` resolves project config if available, but falls back
+# gracefully to global routing preferences without failing if no project is active.
 if [ "$sub" != global ] && [ "$sub" != feedback ]; then
-  fleet_resolve_conf "$proj"
-  export FLEET_CONF   # so new-worker reuses the exact same project config
-  PROJ_NAME="$(basename "$CONF" .env)"
-  fleet_export_worker_env   # HUB/GUARD/NOTIFY/NTFY_TOPIC, read by pack_worker_setup (refresh path)
+  if [ "$sub" = route ]; then
+    fleet_resolve_conf "$proj" 2>/dev/null || true
+    [ -n "${CONF:-}" ] && export FLEET_CONF
+  else
+    fleet_resolve_conf "$proj"
+    export FLEET_CONF   # so new-worker reuses the exact same project config
+    PROJ_NAME="$(basename "$CONF" .env)"
+    fleet_export_worker_env   # HUB/GUARD/NOTIFY/NTFY_TOPIC, read by pack_worker_setup (refresh path)
+  fi
 fi
 
 # ---------- shared helpers ----------
@@ -795,6 +804,13 @@ cmd_add_agent() {
 # model actually has to think about (docs/06). No GATE_CMDS = no-op, so the
 # gate costs nothing to projects that never declare one.
 cmd_gate() {
+  local escalate=0
+  while :; do
+    case "${1:-}" in
+      --escalate) escalate=1; shift ;;
+      *) break ;;
+    esac
+  done
   if [ -z "${GATE_CMDS:-}" ]; then
     echo "gate: no checks declared (GATE_CMDS unset in $(basename "$CONF")) — nothing to gate"
     return 0
@@ -824,6 +840,19 @@ cmd_gate() {
   [ "$before" != "$after" ] && echo "gate: note — checks modified files (auto-fixes); include them in your commit"
   if [ "$failed" -gt 0 ]; then
     echo "gate: FAIL — $failed/$total check(s) failed; fix the findings above and re-run 'fleet gate'"
+    if [ "$escalate" = 1 ] || [ "${GATE_ESCALATE:-0}" = 1 ] || [ "${ROUTE_GATE_ESCALATE:-0}" = 1 ]; then
+      local esc_target
+      esc_target="$(python3 "$SELF_DIR/fleet-route.py" --escalate 2>/dev/null || true)"
+      if [ -n "$esc_target" ]; then
+        echo "gate: automatic escalation target -> $esc_target"
+        local sdir; sdir="$(dispatch_state_dir 2>/dev/null || true)"
+        local cur_name; cur_name="$(basename "$root")"
+        if [ -n "$sdir" ] && [ -d "$sdir" ]; then
+          printf '%s %s gate-escalate %s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$cur_name" "$esc_target" >> "$sdir/events.log"
+          rotate_events_log "$sdir/events.log"
+        fi
+      fi
+    fi
     return 1
   fi
   echo "gate: PASS — $total/$total check(s) passed"
@@ -1190,16 +1219,20 @@ write_worker_meta() {  # <worker-name> <mode: dispatch|interactive>
   } > "$sdir/$name.meta"
 }
 
-cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [base]
-  local model="" taskfile_in=""
+cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--model M] <name> "<task>" [base]
+  local model="" taskfile_in="" auto="" difficulty="" kind="" escalate=""
   # Leading flags (dispatch's own; the global --machine is already parsed).
   # --task-file is the transport for remote dispatch (task shipped as a file so
   # multi-line prompts never fight ssh->docker->bash quoting); it is consumed
   # (deleted) after reading, same as _dispatch-run's taskfile.
   while :; do
     case "${1:-}" in
-      --model)     [ $# -ge 2 ] || { echo "error: --model needs a value" >&2; exit 2; }; model="$2"; shift 2 ;;
-      --task-file) [ $# -ge 2 ] || { echo "error: --task-file needs a value" >&2; exit 2; }; taskfile_in="$2"; shift 2 ;;
+      --model)      [ $# -ge 2 ] || { echo "error: --model needs a value" >&2; exit 2; }; model="$2"; shift 2 ;;
+      --task-file)  [ $# -ge 2 ] || { echo "error: --task-file needs a value" >&2; exit 2; }; taskfile_in="$2"; shift 2 ;;
+      --auto)       auto=1; shift ;;
+      --difficulty) [ $# -ge 2 ] || { echo "error: --difficulty needs a value" >&2; exit 2; }; difficulty="$2"; shift 2 ;;
+      --kind)       [ $# -ge 2 ] || { echo "error: --kind needs a value" >&2; exit 2; }; kind="$2"; shift 2 ;;
+      --escalate)   escalate=1; shift ;;
       *) break ;;
     esac
   done
@@ -1211,8 +1244,40 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [ba
     task="${1:-}"; shift || true
   fi
   local base="${1:-}"
-  [ -z "$name" ] || [ -z "$task" ] && { echo "usage: fleet [--machine M] dispatch [--model M] <name> \"<task>\" [base]" >&2; exit 2; }
+  [ -z "$name" ] || [ -z "$task" ] && { echo "usage: fleet [--machine M] dispatch [--auto] [--difficulty D] [--kind K] [--escalate] [--model M] <name> \"<task>\" [base]" >&2; exit 2; }
   fleet_valid_name "$name" "worker name" || exit 2   # threads through tmux/ssh unquoted
+
+  # Check recursion depth limit (prevents runaway dispatch chains)
+  local cur_depth="${FLEET_DISPATCH_DEPTH:-0}"
+  local max_depth="${ROUTE_MAX_DEPTH:-${FLEET_DEF_ROUTE_MAX_DEPTH:-2}}"
+  if [ "$cur_depth" -ge "$max_depth" ] 2>/dev/null; then
+    echo "error: max dispatch depth ($max_depth) reached (current=$cur_depth)" >&2
+    exit 2
+  fi
+
+  # Auto-routing if requested or difficulty/kind/escalate provided
+  if [ -n "$auto" ] || [ -n "$difficulty" ] || [ -n "$kind" ] || [ -n "$escalate" ]; then
+    local r_out r_agent="" r_model=""
+    local r_args=()
+    [ -n "$difficulty" ] && r_args+=(--difficulty "$difficulty")
+    [ -n "$kind" ] && r_args+=(--kind "$kind")
+    [ -n "$escalate" ] && r_args+=(--escalate)
+    [ -n "$task" ] && r_args+=(--task "$task")
+    r_out="$(python3 "$SELF_DIR/fleet-route.py" "${r_args[@]}")" || exit $?
+    if [[ "$r_out" == *:* ]]; then
+      r_agent="${r_out%%:*}"
+      r_model="${r_out#*:}"
+    else
+      r_agent="$r_out"
+      r_model=""
+    fi
+    [ -z "$agent" ] && agent="$r_agent"
+    [ -z "$model" ] && [ -n "$r_model" ] && model="$r_model"
+    local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
+    printf '%s %s route %s:%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$agent" "${model:-default}" >> "$sdir/events.log"
+    rotate_events_log "$sdir/events.log"
+  fi
+
   need_agent
   # Resolve the target machine (honors --machine); dispatch defaults to local.
   target_machine local
@@ -1226,7 +1291,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [ba
     command -v ssh >/dev/null || { echo "error: remote dispatch needs ssh" >&2; exit 2; }
     version_preflight   # non-fatal warning if the VM engine lags the local one
     local b64; b64="$(printf '%s' "$task" | base64 | tr -d '\n')"
-    local inner="tf=\$(mktemp); echo $b64 | base64 -d > \$tf; fleet --project $M_PROJECT${agent:+ -a $agent} dispatch${model:+ --model $model} --task-file \$tf $name${base:+ $base}"
+    local inner="tf=\$(mktemp); echo $b64 | base64 -d > \$tf; fleet --project $M_PROJECT${agent:+ -a $agent} dispatch${model:+ --model $model}${auto:+ --auto}${difficulty:+ --difficulty $difficulty}${kind:+ --kind $kind}${escalate:+ --escalate} --task-file \$tf $name${base:+ $base}"
     ssh "$M_HOST" "docker exec $M_CONTAINER bash -lc '$inner'"
     return $?
   fi
@@ -1266,7 +1331,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--model M] <name> "<task>" [ba
   # already-resolved project for the headless child (no --project on this
   # inner line). `env VAR=val` wins over whatever the server carries.
   # FLEET_MODEL (when --model is given) rides the same way to pack_launch_headless.
-  local run="env FLEET_CONF='$CONF' FLEET_HOME='$FLEET_ROOT' FLEET_PACKS_DIR='$FLEET_PACKS_DIR'${model:+ FLEET_MODEL='$model'} fleet -a $agent _dispatch-run $name $taskfile"
+  local run="env FLEET_CONF='$CONF' FLEET_HOME='$FLEET_ROOT' FLEET_PACKS_DIR='$FLEET_PACKS_DIR' FLEET_DISPATCH_DEPTH='$((cur_depth + 1))'${model:+ FLEET_MODEL='$model'} fleet -a $agent _dispatch-run $name $taskfile"
   tmux has-session -t "$LT" 2>/dev/null || tmux new-session -d -s "$LT" -n _home
   tmux kill-window -t "$LT:$name" 2>/dev/null || true   # replace any stale window
   kill_done_windows "$LT" "$name"   # and a previous run's _done- pane (no duplicate names)
@@ -1641,6 +1706,10 @@ cmd_feedback() {  # fleet feedback <config|seen|record|list|prune> — conversat
   exec python3 "$SELF_DIR/fleet-feedback.py" "$@"
 }
 
+cmd_route() {  # fleet route [--difficulty D] [--kind K] [--escalate] [--task T]
+  exec python3 "$SELF_DIR/fleet-route.py" "$@"
+}
+
 # ---------- dispatch ----------
 
 case "$sub" in
@@ -1658,7 +1727,7 @@ case "$sub" in
   refresh)     cmd_refresh "${1:-}" ;;
   add-agent)   cmd_add_agent "${1:-}" ;;
   agents)      cmd_agents ;;
-  gate)        cmd_gate ;;
+  gate)        cmd_gate "$@" ;;
   chats)       cmd_chats "$@" ;;
   doctor)      cmd_doctor "$@" ;;
   sync-remote) cmd_sync_remote "${1:-}" ;;
@@ -1668,4 +1737,5 @@ case "$sub" in
   feedback)    cmd_feedback "$@" ;;
   peek)        cmd_peek "$@" ;;
   send)        cmd_send "$@" ;;
+  route)       cmd_route "$@" ;;
 esac

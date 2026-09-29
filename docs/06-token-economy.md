@@ -150,6 +150,14 @@ does not cover. All four are usage discipline, not fleet code:
   tiering is a per-session choice (the CLI's own `/model`), and for headless
   workers `fleet dispatch --model M` sets it per dispatch (packs that support
   it, e.g. claude).
+- **Task routing and escalation (`fleet route` / `dispatch --auto`).** Coordinators
+  tag sub-tasks by difficulty (`easy` / `medium` / `hard`) or kind (`doc` / `code` /
+  `read`). The router maps these to `pack:model` pairs according to configurable
+  preference lists (`ROUTE_EASY`, `ROUTE_MEDIUM`, `ROUTE_HARD`, `ROUTE_KIND_*`).
+  To protect rare frontier tokens, `ROUTE_CLAUDE=escalate-only` reserves Claude for the
+  coordinator unless an explicit escalation path is taken (`ROUTE_ESCALATE`). If a candidate
+  pack encounters a quota error, the router falls through to the next eligible candidate
+  in the preference list. Recursive worker dispatch is bounded by `ROUTE_MAX_DEPTH`.
 - **Cache-prefix hygiene.** The ~1/10 cache read only holds while the prefix
   is byte-identical and within TTL: keep volatile content (timestamps,
   per-turn state) out of the always-loaded context files, and place
