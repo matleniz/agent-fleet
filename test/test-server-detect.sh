@@ -19,6 +19,7 @@ trap cleanup EXIT
 mkdir -p "$TMP/bin"
 
 # The real preamble, extracted from bin/fleet (not a copy that could drift).
+# shellcheck disable=SC2034,SC2154  # dest/name/HUB feed the eval'd bin/fleet snippet, which assigns preamble
 build_preamble() {
   local dest="/tmp/wt/x" name="x" HUB="/tmp/hub"
   eval "$(sed -n '/local preamble="You are a code WORKER/,/Task follows\./p' "$ENGINE/bin/fleet")"
