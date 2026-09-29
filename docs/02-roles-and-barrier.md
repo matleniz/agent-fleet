@@ -141,6 +141,33 @@ text received). Sessions are still not portable between CLIs — switch packs by
 dispatching a new worker, and read the prior transcript via `fleet chats` if you
 need context.
 
+### Cross-CLI worktree handoff: `HANDOFF.md`
+
+Because CLI session formats (transcripts, memory, tool histories) are proprietary
+to each agent (Claude Code, Gemini CLI, Cursor, Opencode, Antigravity, Copilot),
+resuming another CLI's worktree directly cannot rely on session memory. When
+switching agents in an existing worktree or pausing an in-progress stream across
+context boundaries, write `HANDOFF.md` at the worktree root using the template in
+`templates/HANDOFF.md`.
+
+The incoming agent reads `HANDOFF.md` first before reading files or running tools.
+The schema is minimal, concrete, and structured across 7 fields:
+
+1. **Task**: reference / ticket identifier (e.g. `ABC-123`, `#42`) and the high-level objective.
+2. **Status & Result**: state (`completed`, `in-progress`, `blocked`, `failed`) and concrete deliverables produced.
+3. **Reason**: why the handoff is taking place (phase completed, switching to a pack with specific capabilities, context boundary reached, or blocked on external input).
+4. **Constraints**: invariants to preserve (hub read-only barrier, language/style rules, zero-external-dependency rule, untouched areas).
+5. **Next steps**: prioritized, actionable list of steps for the receiving agent.
+6. **Files touched**: explicit list of added, modified, or deleted files with a summary note.
+7. **How to verify**: exact test/gate commands (`fleet gate`, specific test scripts) to run.
+
+This eliminates context rot and token waste: the receiving agent starts with
+immediate clarity rather than burning thousands of tokens parsing raw transcripts.
+
+**Lifecycle:** `HANDOFF.md` is strictly local worktree state — it must NOT end up in
+the PR. Delete it or exclude it via `.git/info/exclude` before creating or updating the
+PR; the final summary belongs in the PR description.
+
 The coordinator has its own command — it IS the bare one: `fleet` launches (or
 resumes) the default agent in the project's hub.
 

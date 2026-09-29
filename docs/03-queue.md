@@ -22,6 +22,10 @@ A queue is the frugal alternative. It is a **durable, structured handoff**:
 - Asynchronous. The coordinator triages on its own schedule; workers pull when
   free.
 
+This structured contract principle applies at two scopes:
+- **Across branches and issues**: the tracker queue (Linear, GitHub Issues) coordinates the coordinator and workers asynchronously.
+- **Within a worktree**: `HANDOFF.md` (template in `templates/HANDOFF.md`) coordinates switching agent CLIs or resuming paused sessions across context boundaries. Its 7-field schema (`task`, `status/result`, `reason`, `constraints`, `next steps`, `files touched`, `how to verify`) replaces unstructured inter-agent prose or re-reading long raw transcripts (see [02](02-roles-and-barrier.md)).
+
 ## Label convention
 
 Pick a small set of `type:` labels so triage is a glance. A starting set:
