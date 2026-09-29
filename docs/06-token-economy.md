@@ -108,6 +108,21 @@ schema-over-prose logic as the queue ([03](03-queue.md)): a fixed, mechanical
 contract at the handoff instead of open-ended model work. A project that
 declares no checks pays nothing — the gate is a no-op.
 
+**Convention checks.** Besides `GATE_CMDS`, the gate can run a small set of
+built-in, deterministic, opt-in checks (`bin/fleet_checks.py`, stdlib only),
+enabled per project with `GATE_CHECKS` (nothing is enabled by default, so an
+existing project is unchanged): `no-tracker-ids` (no tracker ids in code/test
+files), `docs-with-bin` (when `bin/` — `GATE_CODE_DIRS` — changes, a doc and a
+test change in the same branch), `tests-listed-in-ci` (every `test/*.sh` —
+`GATE_TEST_GLOB` — is named in `.github/workflows/ci.yml` — `GATE_CI_FILE`),
+`paths-exist` (backticked paths cited in docs/config exist). Every finding is
+one line `WARN|BLOCK <check> <file>:<line> <message>`; `name` is advisory
+(reported, gate still passes), `name:blocking` fails the gate. The diff-based
+checks look at the files this branch changed against `DEFAULT_BASE`. Together
+they count as one check in the `PASS n/n` summary. The same runner enforces
+the dispatch spec's scope allowlist ([07](07-machine-and-solo.md)) — one
+mechanism, one report format.
+
 When gate checks fail under `fleet gate --escalate` (or when `GATE_ESCALATE=1` or
 `ROUTE_GATE_ESCALATE=1` is configured), the gate queries the router for the
 escalation candidate (`fleet-route.py --escalate`, e.g. `claude:sonnet`), prints it as an

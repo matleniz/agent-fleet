@@ -11,6 +11,10 @@ Unreleased until the first one.
 ## [Unreleased]
 
 ### Added
+- Opt-in convention checks for `fleet gate` (`GATE_CHECKS`, `bin/fleet_checks.py`):
+  `no-tracker-ids`, `docs-with-bin`, `tests-listed-in-ci`, `paths-exist`, each
+  reported as `file:line`, advisory by default or `:blocking`. Nothing is
+  enabled by default. Test: `test/test-gate-checks.sh`.
 - One shared headless review/aggregation primitive (`fleet_pass`,
   `bin/fleet-pass.sh`) over the existing `pack_launch_headless`, routed through
   `fleet route --kind <kind>` (never claude by default), and three opt-in

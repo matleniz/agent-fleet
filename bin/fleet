@@ -822,6 +822,8 @@ cmd_gate() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --review) review=1 ;;
+      --scope)  [ $# -ge 2 ] || { echo "error: --scope needs a value" >&2; return 2; }
+                args+=(--scope "$(python3 "$SELF_DIR/fleet_checks.py" norm-scope "$2")") || return 2; shift ;;
       *) args+=("$1") ;;
     esac
     shift
@@ -835,21 +837,62 @@ cmd_gate() {
   return "$rc"
 }
 
+# Convention checks (bin/fleet_checks.py) share the gate's report: one line per
+# finding as file:line, advisory (WARN, never fails) or blocking (BLOCK, counts
+# as a failed check). Enabled by GATE_CHECKS / the worker's dispatch spec /
+# --scope; none enabled = nothing runs.
+gate_convention_checks() {  # <root> <scope> ; prints report, returns 1 on a blocking finding
+  local root="$1" scope="$2" checks="${GATE_CHECKS:-}" name meta
+  name="$(basename "$root")"
+  local sdir; sdir="$(dispatch_state_dir 2>/dev/null || true)"
+  meta="${sdir:+$sdir/$name.meta}"
+  if [ -n "$meta" ] && [ -f "$meta" ]; then
+    local m_checks m_scope
+    m_checks="$(sed -n 's/^checks=//p' "$meta" | head -1)"
+    m_scope="$(sed -n 's/^scope=//p' "$meta" | head -1)"
+    checks="${checks:+$checks,}$m_checks"
+    [ -n "$scope" ] || scope="$m_scope"
+  fi
+  [ -n "$scope" ] || scope="${GATE_SCOPE:-}"
+  [ -n "$checks" ] || [ -n "$scope" ] || return 0
+  local out crc=0 nfind
+  out="$(python3 "$SELF_DIR/fleet_checks.py" run --root "$root" --base "${DEFAULT_BASE:-origin/main}" --checks "$checks" --scope "$scope" 2>&1)" || crc=$?
+  if [ "$crc" -eq 2 ]; then
+    echo "gate: FAIL  convention checks misconfigured: $out"
+    return 1
+  fi
+  if [ -n "$out" ]; then
+    nfind="$(printf '%s\n' "$out" | wc -l)"
+    echo "gate: convention checks ($nfind finding(s); WARN = advisory, BLOCK = blocking)"
+    printf '%s\n' "$out" | head -n 200
+  else
+    echo "gate: ok    convention checks"
+  fi
+  [ "$crc" -eq 0 ]
+}
+
 gate_checks() {
-  local escalate=0
+  local escalate=0 scope_flag=""
   while :; do
     case "${1:-}" in
       --escalate) escalate=1; shift ;;
+      --scope) scope_flag="$2"; shift 2 ;;
       *) break ;;
     esac
   done
-  if [ -z "${GATE_CMDS:-}" ]; then
-    echo "gate: no checks declared (GATE_CMDS unset in $(basename "$CONF")) — nothing to gate"
-    return 0
-  fi
   # Run from the repo root when inside one, so path-relative checks cover the
   # whole tree regardless of the subdir the session invoked the gate from.
   local root; root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  local has_conv=0
+  if [ -n "${GATE_CHECKS:-}" ] || [ -n "$scope_flag" ] || [ -n "${GATE_SCOPE:-}" ]; then has_conv=1
+  else
+    local sd; sd="$(dispatch_state_dir 2>/dev/null || true)"
+    [ -n "$sd" ] && grep -qE '^(scope|checks)=' "$sd/$(basename "$root").meta" 2>/dev/null && has_conv=1
+  fi
+  if [ -z "${GATE_CMDS:-}" ] && [ "$has_conv" = 0 ]; then
+    echo "gate: no checks declared (GATE_CMDS unset in $(basename "$CONF")) — nothing to gate"
+    return 0
+  fi
   local before after; before="$(git -C "$root" status --porcelain 2>/dev/null || true)"
   local line total=0 failed=0 rc out nlines
   while IFS= read -r line; do
@@ -867,7 +910,11 @@ gate_checks() {
       nlines="$(printf '%s\n' "$out" | wc -l)"
       [ "$nlines" -gt 200 ] && echo "gate: … output truncated ($nlines lines; re-run for the rest: $line)"
     fi
-  done <<< "$GATE_CMDS"
+  done <<< "${GATE_CMDS:-}"
+  if [ "$has_conv" = 1 ]; then
+    total=$((total + 1))
+    gate_convention_checks "$root" "$scope_flag" || failed=$((failed + 1))
+  fi
   after="$(git -C "$root" status --porcelain 2>/dev/null || true)"
   [ "$before" != "$after" ] && echo "gate: note — checks modified files (auto-fixes); include them in your commit"
   if [ "$failed" -gt 0 ]; then

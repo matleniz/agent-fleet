@@ -174,7 +174,8 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           #   scopes machine-wide skill descriptions (none|allowlist;
                           #   default = all, retro-compatible; see docs/06)
    fleet gate             # run the project's declared pre-PR checks (GATE_CMDS in
-                          #   its .env): auto-fixes apply mechanically, only residual
+                          #   its .env; plus opt-in convention checks, GATE_CHECKS:
+                          #   file:line, advisory or :blocking — docs/06): auto-fixes apply mechanically, only residual
                           #   failures print; no-op if the project declares none
    fleet gate --review    # + one advisory fresh-model review of the diff after the checks
                           #   pass (or GATE_REVIEW=1; `fleet judge` alone); never blocks
