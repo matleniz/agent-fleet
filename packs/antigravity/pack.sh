@@ -24,6 +24,9 @@
 # shellcheck source=packs/hub-mount-ns.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/../hub-mount-ns.sh"
 
+# Optional: indicates this pack requires userns mount namespace for hub isolation.
+pack_requires_userns() { return 0; }
+
 _agy_db="$HOME/.gemini/antigravity-cli/conversation_summaries.db"
 
 # agy --continue is GLOBAL (most recent conversation anywhere), so resume is

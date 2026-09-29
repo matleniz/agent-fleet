@@ -108,6 +108,15 @@ schema-over-prose logic as the queue ([03](03-queue.md)): a fixed, mechanical
 contract at the handoff instead of open-ended model work. A project that
 declares no checks pays nothing — the gate is a no-op.
 
+When gate checks fail under `fleet gate --escalate` (or when `GATE_ESCALATE=1` or
+`ROUTE_GATE_ESCALATE=1` is configured), the gate queries the router for the
+escalation candidate (`fleet-route.py --escalate`, e.g. `claude:sonnet`), prints it as an
+explicit recommendation (`gate: automatic escalation target -> <target>`), and records a
+structured `gate-escalate` event in the project's `events.log`. The gate exits non-zero
+(exit 1) so the worker or coordinator can review residual findings and decide whether
+to re-dispatch or hand off — it does not silently spawn unapproved workers behind the
+scenes.
+
 ## Operational levers checklist
 
 State-of-the-art practice (checked mid-2026) adds four levers the model above
@@ -150,6 +159,22 @@ does not cover. All four are usage discipline, not fleet code:
   tiering is a per-session choice (the CLI's own `/model`), and for headless
   workers `fleet dispatch --model M` sets it per dispatch (packs that support
   it, e.g. claude).
+- **Task routing and escalation (`fleet route` / `dispatch --auto`).** Coordinators
+  tag sub-tasks by difficulty (`easy` / `medium` / `hard`) or kind (`doc` / `code` /
+  `read`). The router maps these to `pack:model` pairs according to configurable
+  preference lists (`ROUTE_EASY`, `ROUTE_MEDIUM`, `ROUTE_HARD`, `ROUTE_KIND_*`).
+  Working defaults (`antigravity cursor copilot`) prioritize reliable working packs
+  (gemini and opencode are omitted from defaults due to client/provider dependencies
+  and used only when explicitly listed).
+  To protect rare frontier tokens, `ROUTE_CLAUDE=escalate-only` reserves Claude for the
+  coordinator unless an explicit escalation path is taken (`ROUTE_ESCALATE`).
+  If a candidate pack encounters a quota error (detected automatically by `_dispatch-run`
+  when a non-zero exit matches `pack_quota_pattern` declared by the pack, or manually via
+  `fleet route --quota-exceeded <pack>`), fleet writes an active ledger in
+  `$FLEET_ROOT/quota/<pack>` with a configurable TTL (`ROUTE_QUOTA_TTL_SEC`, default 6h =
+  21600s). The router skips any pack with an active ledger, logs the fallback, and routes
+  to the next eligible candidate in the preference list. Recursive worker dispatch is bounded
+  by `ROUTE_MAX_DEPTH`.
 - **Cache-prefix hygiene.** The ~1/10 cache read only holds while the prefix
   is byte-identical and within TTL: keep volatile content (timestamps,
   per-turn state) out of the always-loaded context files, and place

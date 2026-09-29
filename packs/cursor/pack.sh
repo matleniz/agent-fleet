@@ -153,3 +153,6 @@ pack_doctor() {
   s="$(timeout 10 agent status 2>/dev/null | head -1 || true)"
   echo "installed ($v) — ${s:-status unavailable}"
 }
+
+# Optional: quota error pattern in worker output or pane.
+pack_quota_pattern() { echo "Weekly usage limit reached"; }

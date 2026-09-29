@@ -89,13 +89,20 @@ PY
   return 1
 }
 
+# Optional: indicates this pack requires userns mount namespace for hub isolation.
+pack_requires_userns() { return 0; }
+
+# Optional: quota error pattern in worker output or pane.
+pack_quota_pattern() { echo "exceeded your monthly quota"; }
+
 # True iff recent Copilot logs (last 24h by default) contain a quota-exceeded error.
 _cop_recent_quota_error() {
   local logdir="${COPILOT_HOME:-$HOME/.copilot}/logs"
   [ -d "$logdir" ] || return 1
-  python3 - "$logdir" <<'PY'
+  local pat; pat="$(pack_quota_pattern)"
+  python3 - "$logdir" "$pat" <<'PY'
 import glob, os, sys, time
-logdir = sys.argv[1]
+logdir, pat = sys.argv[1], sys.argv[2]
 try:
     logs = sorted(glob.glob(os.path.join(logdir, "process-*.log")), key=os.path.getmtime, reverse=True)
 except OSError:
@@ -108,7 +115,7 @@ for log in logs[:10]:
             break
         with open(log, errors="ignore") as f:
             c = f.read()
-            if "exceeded your monthly quota" in c or "402 You have exceeded" in c:
+            if pat in c or "402 You have exceeded" in c:
                 sys.exit(0)
     except OSError:
         pass

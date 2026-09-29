@@ -72,6 +72,25 @@ FLEET_DEF_WORKER_NODE_MAX_MB=0  # V8 old-space cap per node worker, MB (0 = off)
 # worker and supervision paths — not an admission-guard knob.
 FLEET_DEF_WORKER_STALL_MINUTES=20
 
+# Task router preferences (fleet route / fleet dispatch --auto, docs/06).
+# Ordered preference lists and policy defaults. Machine-wide, overridable in
+# ~/.config/fleet/routing.env, default.env, or a project .env. Read by bin/fleet
+# and bin/fleet-route.py (same process/subprocesses), invisible to shellcheck here.
+# shellcheck disable=SC2034
+FLEET_DEF_ROUTE_EASY="antigravity cursor copilot"
+# shellcheck disable=SC2034
+FLEET_DEF_ROUTE_MEDIUM="antigravity cursor copilot"
+# shellcheck disable=SC2034
+FLEET_DEF_ROUTE_HARD="antigravity cursor copilot claude:sonnet"
+# shellcheck disable=SC2034
+FLEET_DEF_ROUTE_ESCALATE="claude:sonnet claude:opus"
+# shellcheck disable=SC2034
+FLEET_DEF_ROUTE_CLAUDE="escalate-only"
+# shellcheck disable=SC2034
+FLEET_DEF_ROUTE_MAX_DEPTH=2
+# shellcheck disable=SC2034
+FLEET_DEF_ROUTE_QUOTA_TTL_SEC=21600
+
 # conversation-feedback routine (docs/04) — model + runner knobs. The routine is a
 # 3-stage pipeline: A extract (deterministic, no model), B compress (small model,
 # frequent, LOCAL — transcripts are private), C distill (strong model, rarer,
@@ -346,8 +365,9 @@ fleet_resolve_conf() {
     echo "Name it explicitly: fleet --project <name> ...  (or export FLEET_PROJECT)" >&2
     _fleet_list; exit 2
   fi
-  # Cross-project defaults (e.g. MACHINES_DEFAULT) sourced BEFORE the project
+  # Cross-project defaults (e.g. MACHINES_DEFAULT, routing) sourced BEFORE the project
   # conf, so the project always wins. Never a place for a default project.
+  [ -f "$FLEET_ROOT/routing.env" ] && . "$FLEET_ROOT/routing.env"
   [ -f "$FLEET_ROOT/default.env" ] && . "$FLEET_ROOT/default.env"
   . "$CONF"
   # Stall threshold: project/default.env wins; else the built-in. Exported so
