@@ -125,6 +125,13 @@ FLEET_DEF_FEEDBACK_MODEL_DISTILL=sonnet  # stage C: strong, rarer  (empty = CLI 
 # shellcheck disable=SC2034
 FLEET_DEF_FEEDBACK_RUNNER=local          # where stage C runs: local | ssh | cloud
 
+# Headless review/aggregation passes (fleet judge / race / fanin, docs/06): all
+# opt-in, none default-on. Read by bin/fleet-pass.sh (same process).
+# shellcheck disable=SC2034
+FLEET_DEF_PASS_TIMEOUT=900              # seconds before a review/aggregation pass is killed
+# shellcheck disable=SC2034
+FLEET_DEF_JUDGE_MAX_DIFF_BYTES=60000    # diff bytes embedded in the judge prompt
+
 _fleet_list() {
   echo "known projects (--project <name>):" >&2
   if [ -d "$FLEET_PROJECTS" ]; then

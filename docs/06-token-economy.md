@@ -117,6 +117,29 @@ structured `gate-escalate` event in the project's `events.log`. The gate exits n
 to re-dispatch or hand off — it does not silently spawn unapproved workers behind the
 scenes.
 
+## Headless review passes: judge, race, fan-in
+
+Three opt-in features share ONE primitive, `fleet_pass` (`bin/fleet-pass.sh`): a
+fresh, non-interactive model run launched through the pack's existing
+`pack_launch_headless <prompt> <model>` — the same entry point `fleet dispatch`
+and the conversation-feedback distill use, so there is no new pack contract. The
+primitive picks pack:model through the router (`fleet route --difficulty hard
+--kind <kind>`: `ROUTE_KIND_JUDGE` / `ROUTE_KIND_RACE_JUDGE` / `ROUTE_KIND_FANIN`
+override `ROUTE_HARD`; quota fall-through and `ROUTE_CLAUDE` apply, so a pass
+never defaults to claude), bounds the run (`PASS_TIMEOUT`, default 900 s), records
+a quota-exhausted pack in the quota ledger, and flags a pass that touched the
+worktree (the prompt tells it not to; the check makes a violation visible).
+`--with <pack[:model]>` overrides the router for one call. A pass skips the
+admission guard (it is short-lived and read-only) and ignores the dispatch depth
+limit (it dispatches nothing).
+
+- **`fleet judge`** (also `fleet gate --review`, or `GATE_REVIEW=1`): after the
+  deterministic checks pass, one fresh pass — no shared context with the author —
+  reads the diff against the task (recorded dispatch task, `--task`, or commit
+  subjects) and prints findings plus `VERDICT: APPROVE|CONCERNS`. **Advisory**: it
+  never changes the gate's exit code and never files anything (a false positive
+  must not silently block a PR); a pass that cannot run is reported as "not
+  judged". Notes are kept in the dispatch state dir as `<worker>.judge.md`.
 ## Operational levers checklist
 
 State-of-the-art practice (checked mid-2026) adds four levers the model above

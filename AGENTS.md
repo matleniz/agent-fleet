@@ -6,7 +6,9 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
 ## Layout
 - `bin/` — the canonical tools (`fleet`, `fleet-init`, `new-worker`,
   `fleet-assess`, `fleet-queue`, `fleet-config.sh`, `hub-readonly-guard.py`,
-  `fleet-notify`, `fleet-migrate`, `fleet-status.py`, `fleet-context.py`,
+  `fleet-notify`, `fleet-migrate`, `fleet-pass.sh` / `fleet-race.sh` /
+  `fleet-fanin.sh` (sourced by `fleet`: the shared headless review pass and `judge` /
+  `race` / `fanin` built on it), `fleet-status.py`, `fleet-context.py`,
   `fleet-chats-scan.py`, `fleet_chat_parse.py`, `fleet-feedback.py`,
   `fleet_common.py`). Single source of truth; every project uses these via
   `~/.local/bin` symlinks (`fleet-status.py` / `fleet-context.py` /
@@ -42,7 +44,8 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
   `dispatch.sh` (headless dispatch + per-pack flags + write-probe), `global.sh`
   (`fleet global` wiring), `barrier-{cursor,antigravity,copilot}.sh` (per-pack
   read-only-hub barrier), `test-guard.sh` (resource guard), `test-context.sh`
-  (context reporter).
+  (context reporter), `make-fake-llm-pack.sh` (fake pack: model-free pipeline
+  tests `test-{judge,race,fanin,pipeline}-e2e.sh`).
 - `docs/` — the model (`01`-`07`). `BOOTSTRAP.md` — the setup prompt.
 
 ## Provenance and isolation (legacy decommissioned)
