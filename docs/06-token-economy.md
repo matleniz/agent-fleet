@@ -140,6 +140,18 @@ limit (it dispatches nothing).
   never changes the gate's exit code and never files anything (a false positive
   must not silently block a PR); a pass that cannot run is reported as "not
   judged". Notes are kept in the dispatch state dir as `<worker>.judge.md`.
+- **`fleet race`**: `fleet race run --packs "cursor copilot" <race> "<task>"` fans one
+  task to N (2–6) worktrees `<race>-a`, `<race>-b`, … through `fleet dispatch`.
+  Once they finish (`fleet wait`), `fleet race judge <race>` runs a judge pass that
+  recommends a winner and drafts markdown review comments for each loser (files in
+  `dispatch/<project>/race/<race>/comments/`). LLM judges have a documented
+  selection gap, so it is a recommendation — you decide. Add or edit comments with
+  `fleet race comment <race> <worktree> [file|-]`, then `fleet race steer <race>
+  --all [--toward <winner>]` re-sends each worktree's comments as a follow-up
+  prompt through the same dispatch path to that worktree's own pack (the branch
+  already holds its earlier commits; `--toward` also shows the winner's diff).
+  Iterate: `wait` → `judge` → `steer`. Sent comments are archived
+  (`<worktree>.sent-<round>.md`) and each round is logged in `events.log`.
 ## Operational levers checklist
 
 State-of-the-art practice (checked mid-2026) adds four levers the model above

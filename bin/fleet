@@ -32,6 +32,7 @@ set -euo pipefail
 SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 . "$SELF_DIR/fleet-config.sh"
 . "$SELF_DIR/fleet-pass.sh"   # headless review pass primitive + `fleet judge`
+. "$SELF_DIR/fleet-race.sh"   # `fleet race`
 NEW_WORKER="$SELF_DIR/new-worker"
 
 usage() {
@@ -92,6 +93,9 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
                        one fresh headless model pass reviews this worktree's diff
                        against its task: findings + VERDICT, terminal only, never
                        blocks. Pack/model come from the router (ROUTE_KIND_JUDGE).
+  race run|ls|judge|comment|steer  fan one task to N worktrees (--packs "a b"),
+                       a judge pass compares + drafts markdown review comments,
+                       `steer` re-dispatches them to the losing worktrees.
   chats [<worker>]     per-pack pointer to the conversation recorded in the
                        worktree (bare = the hub/coordinator); read it to reprise
                        a dead/other agent's session (transcripts are not portable)
@@ -133,7 +137,7 @@ if [ -z "$sub" ]; then
       case "${1:-}" in -h|--help|"") exec "$SELF_DIR/fleet-init" ;; esac
       exec "$SELF_DIR/fleet-init" "$@" ;;
     ""|hub) sub="hub"; [ $# -gt 0 ] && shift ;;
-    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|judge|chats|doctor|sync-remote|dispatch|attach|wait|retry|global|machines|status|context|feedback|peek|send|route|_dispatch-run)
+    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|judge|race|chats|doctor|sync-remote|dispatch|attach|wait|retry|global|machines|status|context|feedback|peek|send|route|_dispatch-run)
       sub="$1"; [ "$sub" = worker ] && sub=w; [ "$sub" = remote ] && sub=r; shift ;;
     -*) echo "error: unknown option '$1'" >&2; exit 2 ;;
     *)
@@ -2064,6 +2068,7 @@ case "$sub" in
   agents)      cmd_agents ;;
   gate)        cmd_gate "$@" ;;
   judge)       cmd_judge "$@" ;;
+  race)        cmd_race "$@" ;;
   chats)       cmd_chats "$@" ;;
   doctor)      cmd_doctor "$@" ;;
   sync-remote) cmd_sync_remote "${1:-}" ;;

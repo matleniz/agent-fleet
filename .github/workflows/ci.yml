@@ -64,7 +64,7 @@ jobs:
                    test/barrier-guard.sh test/barrier-cursor.sh \
                    test/test-route-table.sh test/test-route-scorer.sh \
                    test/test-route-e2e.sh \
-                   test/test-judge-e2e.sh; do
+                   test/test-judge-e2e.sh test/test-race-e2e.sh; do
             echo "::group::$t"
             bash "$t"
             echo "::endgroup::"

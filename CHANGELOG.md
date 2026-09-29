@@ -14,9 +14,10 @@ Unreleased until the first one.
 - Shared headless review/aggregation primitive (`fleet_pass`, `bin/fleet-pass.sh`)
   over the existing `pack_launch_headless`, routed through
   `fleet route --difficulty hard --kind <kind>` (never claude by default), and its
-  first user: `fleet judge` / `fleet gate --review` / `GATE_REVIEW=1`, an
-  advisory (non-blocking) fresh-model review of the diff after the gate passes.
-  Tests: `test/test-judge-e2e.sh` (with the model-free `make-fake-llm-pack.sh`).
+  first users: `fleet judge` / `fleet gate --review` / `GATE_REVIEW=1` (advisory
+  post-gate diff review) and `fleet race` (`run|ls|judge|comment|steer`: one task
+  in N worktrees, a judge pass, markdown review comments re-dispatched to the
+  losers). Tests: `test-judge-e2e.sh`, `test-race-e2e.sh`.
 
 ### Fixed
 - `fleet del <name>` reaps leftover `<name>` / `_done-<name>` panes and dispatch
