@@ -151,7 +151,9 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet dispatch --model opus big "<task>"   # pick the worker's model (claude)
    fleet --machine vm dispatch my-task "<task>"  # headless worker ON the VM
    fleet wait my-task     # block until a dispatched worker finishes (rc)
-   fleet ls               # worktrees (session markers + [dispatch: done rc=N])
+   fleet ls               # worktrees (session markers + [dispatch: done rc=N]);
+                          #   also lists orphan tmux windows (no worktree /
+                          #   deleted pane path) — reap with prune --windows
    fleet status           # the whole tree (machines/coordinator/workers/queue)
    fleet status --json    # same, machine-readable (what a dashboard/UI consumes)
    fleet status --remote  # also gather VM sessions over ssh (default: local only)
@@ -165,6 +167,9 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           #   failures print; no-op if the project declares none
    fleet peek local hub   # dump a session's terminal   ·   fleet send local hub "y"
    fleet del my-task      # remove one (guarded)  ·  fleet prune  = all merged ones
+                          #   fleet prune --windows  also reaps orphan tmux
+                          #   windows (no worktree / deleted pane path; live
+                          #   orphans need --force)
    fleet agents / doctor  # enabled packs / installed+logged status per pack
    fleet chats [<worker>] # per-pack pointer to the recorded conversation (read
                           #   to reprise a dead/other agent's session; not portable)

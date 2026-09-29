@@ -189,9 +189,77 @@ def commits_ahead(path, base):
     return int(out) if out.isdigit() else None
 
 
-def tmux_windows(session):
-    out = run(["tmux", "list-windows", "-t", session, "-F", "#{window_name}"])
-    return set(w for w in out.splitlines() if w)
+def tmux_window_details(session):
+    """Name + pane path + pid + command for every window in the session."""
+    out = run(
+        [
+            "tmux",
+            "list-windows",
+            "-t",
+            session,
+            "-F",
+            "#{window_name}\t#{pane_current_path}\t#{pane_pid}\t#{pane_current_command}",
+        ]
+    )
+    rows = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 4:
+            continue
+        rows.append(
+            {
+                "name": parts[0],
+                "path": parts[1],
+                "pane_pid": parts[2],
+                "cmd": parts[3],
+            }
+        )
+    return rows
+
+
+def pane_is_live(pid, cmd):
+    """Match bin/fleet's pane_is_live: childless shell = idle; else live.
+
+    No ps or unknown pid → treat as live (never claim idle without proof).
+    """
+    shells = ("bash", "sh", "dash", "ash", "zsh", "ksh", "fish")
+    if cmd not in shells:
+        return True
+    if not pid:
+        return True
+    out = run(["ps", "-o", "pid=", "--ppid", pid])
+    return bool(out.strip())
+
+
+def orphan_windows(details, worker_names):
+    """Windows with no matching worktree, or a pane path marked (deleted).
+
+    Reserved hub/_home windows are never orphans. A finished-dispatch
+    `_done-<name>` window whose worktree still exists is kept for inspection.
+    """
+    reserved = {"hub", "_home"}
+    known = set(worker_names)
+    orphans = []
+    for w in details:
+        name = w["name"]
+        if name in reserved:
+            continue
+        logical = name[6:] if name.startswith("_done-") else name
+        path = w.get("path") or ""
+        deleted = path.endswith(" (deleted)")
+        if logical in known and not deleted:
+            continue
+        reason = "deleted-path" if deleted else "no-worktree"
+        orphans.append(
+            {
+                "name": name,
+                "logical": logical,
+                "path": path,
+                "live": pane_is_live(w.get("pane_pid", ""), w.get("cmd", "")),
+                "reason": reason,
+            }
+        )
+    return orphans
 
 
 def read_meta(path):
@@ -211,7 +279,8 @@ def local_sessions(env, proj, tmux):
     code_repo = env.get("CODE_REPO", "")
     wt_home = env.get("WT_HOME", "")
     base = env.get("DEFAULT_BASE", "")
-    windows = tmux_windows(tmux) if tmux else set()
+    details = tmux_window_details(tmux) if tmux else []
+    windows = set(w["name"] for w in details)
     sdir = os.path.join(DISPATCH_DIR, proj)
     statuses, metas = {}, {}
     if os.path.isdir(sdir):
@@ -225,9 +294,11 @@ def local_sessions(env, proj, tmux):
                 metas[fn[:-5]] = read_meta(os.path.join(sdir, fn))
 
     workers = []
+    worker_names = []
     if code_repo and wt_home:
         for t in worktrees(code_repo, wt_home):
             name = t["path"][len(wt_home.rstrip("/")) + 1 :]
+            worker_names.append(name)
             meta = metas.get(name, {})
             mode = meta.get("mode") or (
                 "dispatch" if name in statuses else "interactive"
@@ -254,7 +325,10 @@ def local_sessions(env, proj, tmux):
             "present": "hub" in windows,
             "hub": env.get("HUB") or None,
         }
-    return {"coordinator": coordinator, "workers": workers}
+    # Additive field (MAT-122): windows invisible to the worktree-derived
+    # workers list. MAT-125 may extend the status surface — keep this local.
+    orphans = orphan_windows(details, worker_names) if details else []
+    return {"coordinator": coordinator, "workers": workers, "orphans": orphans}
 
 
 def project_tree(name, env, defaults, probe_remote=False):
@@ -338,6 +412,17 @@ def render_text(tree):
                             warn,
                         )
                     )
+            for o in s.get("orphans") or []:
+                lines.append(
+                    "  │      %-14s %-11s %s (%s)%s"
+                    % (
+                        o["name"],
+                        "[orphan]",
+                        o.get("reason", "?"),
+                        "live" if o.get("live") else "idle",
+                        ("  " + o["path"]) if o.get("path") else "",
+                    )
+                )
     return "\n".join(lines) if lines else "(no projects)"
 
 

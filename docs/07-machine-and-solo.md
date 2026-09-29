@@ -189,6 +189,15 @@ finished dispatch window is otherwise kept "for inspection" and would keep
 counting against `MAX_WORKERS`, causing false refusals. The dispatch `events.log`
 is capped so it cannot grow without bound.
 
+**Orphan windows.** A tmux window can outlive its worktree (deleted outside
+fleet, an ad-hoc pane opened inside the project session, a cwd that no longer
+exists — tmux shows the pane path with ` (deleted)`). `fleet ls` and
+`fleet status` list those orphans; `fleet prune` reports them. Reap with the
+explicit `fleet prune --windows` (idle / deleted-path orphans only). A window
+that still has a live agent child needs `fleet --force prune --windows` — never
+killed by default. Reserved `hub` / `_home` windows are never orphans. Grouped
+`fv-*` views share the base session's windows, so one kill cleans them all.
+
 ### How the active project is resolved
 
 `fleet`, `new-worker`, and `fleet-assess` pick the project in this order:

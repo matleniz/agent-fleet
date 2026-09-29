@@ -55,6 +55,7 @@ jobs:
                    test/dispatch.sh test/relaunch.sh \
                    test/test-name-validation.sh test/test-new-worker.sh \
                    test/test-legacy-isolation.sh test/test-claude-resume.sh \
+                   test/test-orphan-windows.sh \
                    test/barrier-guard.sh test/barrier-cursor.sh; do
             echo "::group::$t"
             bash "$t"
