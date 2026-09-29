@@ -21,6 +21,7 @@ pack_launch() {
 # posture as pack_launch (barrier is the BeforeTool hook, unaffected).
 # $2 (optional): model, from `fleet dispatch --model` (`-m/--model`, verified in
 # gemini --help 0.50.0).
+# shellcheck disable=SC2034  # read by fleet_model_args / fleet_pack_honors_model (bin/fleet-config.sh)
 PACK_MODEL_FLAG=--model
 pack_launch_headless() {
   fleet_node_heap_guard

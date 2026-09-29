@@ -24,6 +24,7 @@ pack_launch() {
 # --trust` leaves the worker with no shell.
 # $2 (optional): model, from `fleet dispatch --model` (`--model <model>`,
 # verified in `agent --help`; `agent models` lists the valid ids).
+# shellcheck disable=SC2034  # read by fleet_model_args / fleet_pack_honors_model (bin/fleet-config.sh)
 PACK_MODEL_FLAG=--model
 pack_launch_headless() {
   fleet_model_args "${2:-}"

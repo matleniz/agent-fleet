@@ -67,6 +67,7 @@ PY
 # `--dangerously-skip-permissions` must NOT follow `-p` (MAT-14).
 # $2 (optional): model, from `fleet dispatch --model` (`--model`, verified in
 # agy --help; `agy models` lists the ids).
+# shellcheck disable=SC2034  # read by fleet_model_args / fleet_pack_honors_model (bin/fleet-config.sh)
 PACK_MODEL_FLAG=--model
 pack_launch_headless() {
   local adddir=()

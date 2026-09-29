@@ -217,6 +217,7 @@ fleet_pack_honors_model() { [ -n "${PACK_MODEL_FLAG:-}" ]; }
 # fleet_model_args <model>: sets FLEET_MODEL_ARGS to (flag model), or () when no
 # model is requested (the CLI keeps its own default). Expand it quoted.
 fleet_model_args() {
+  # shellcheck disable=SC2034  # consumed by the calling pack
   FLEET_MODEL_ARGS=()
   [ -n "${1:-}" ] && FLEET_MODEL_ARGS=("$PACK_MODEL_FLAG" "$1")
   return 0

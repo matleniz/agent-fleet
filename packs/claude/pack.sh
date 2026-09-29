@@ -89,6 +89,7 @@ _claude_require_auto_capable() {  # <model or "">
 # The read-only-hub barrier (PreToolUse hook) is unaffected.
 # $2 (optional): the model for this worker, from `fleet dispatch --model` (else
 # the account default). --model is a real claude flag (verified against v2.1.x).
+# shellcheck disable=SC2034  # read by fleet_model_args / fleet_pack_honors_model (bin/fleet-config.sh)
 PACK_MODEL_FLAG=--model
 pack_launch_headless() {
   _claude_require_auto_capable "${2:-}" || exit 2

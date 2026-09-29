@@ -151,6 +151,7 @@ pack_launch() {
 # Fails early if a monthly quota exceeded error is present in recent logs.
 # $2 (optional): model, from `fleet dispatch --model` (`--model <model>`, verified
 # in copilot --help; `auto` lets Copilot pick).
+# shellcheck disable=SC2034  # read by fleet_model_args / fleet_pack_honors_model (bin/fleet-config.sh)
 PACK_MODEL_FLAG=--model
 pack_launch_headless() {
   local adddir=()
