@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # test-guard.sh — unit + isolated-E2E tests for the resource guard rails
 # (fleet-config.sh: per-machine limit resolution, guard_probe, fleet_guard, the
-# per-worker heap cap fleet_node_heap_guard; bin/fleet: cmd_dispatch refuses
-# before launching). Touches nothing real: it runs against a throwaway $FLEET_HOME
-# under a temp dir and never launches an agent (every checked path is a refusal,
-# which exits before any launch).
+# per-worker wall-clock budget MAX_WORKER_WALL_SEC, the per-worker heap cap
+# fleet_node_heap_guard; bin/fleet: cmd_dispatch refuses before launching).
+# Touches nothing real: it runs against a throwaway $FLEET_HOME under a temp dir
+# and never launches an agent (every checked path is a refusal, which exits
+# before any launch).
 #
 #   test/test-guard.sh
 set -uo pipefail
@@ -30,24 +31,30 @@ PROJ_NAME="test"
 
 # Built-in defaults when nothing is set.
 fleet_load_machine local
-eq "builtin MAX_WORKERS"      "$M_MAX_WORKERS"      "$FLEET_DEF_MAX_WORKERS"
-eq "builtin MIN_FREE_MB"      "$M_MIN_FREE_MB"      "$FLEET_DEF_MIN_FREE_MB"
-eq "builtin MIN_FREE_DISK_MB" "$M_MIN_FREE_DISK_MB" "$FLEET_DEF_MIN_FREE_DISK_MB"
+eq "builtin MAX_WORKERS"           "$M_MAX_WORKERS"           "$FLEET_DEF_MAX_WORKERS"
+eq "builtin MIN_FREE_MB"           "$M_MIN_FREE_MB"           "$FLEET_DEF_MIN_FREE_MB"
+eq "builtin MIN_FREE_DISK_MB"      "$M_MIN_FREE_DISK_MB"      "$FLEET_DEF_MIN_FREE_DISK_MB"
+eq "builtin MAX_WORKER_WALL_SEC"   "$M_MAX_WORKER_WALL_SEC"   "$FLEET_DEF_MAX_WORKER_WALL_SEC"
+eq "builtin wall-clock off (0)"    "$FLEET_DEF_MAX_WORKER_WALL_SEC" "0"
 
 # Global default (default.env / project .env, i.e. a shell var here) wins over built-in.
-MAX_WORKERS=3 MIN_FREE_MB=1024 MIN_FREE_DISK_MB=2048 fleet_load_machine local
-eq "global MAX_WORKERS wins"  "$M_MAX_WORKERS" "3"
-eq "global MIN_FREE_MB wins"  "$M_MIN_FREE_MB" "1024"
+MAX_WORKERS=3 MIN_FREE_MB=1024 MIN_FREE_DISK_MB=2048 MAX_WORKER_WALL_SEC=3600 \
+  fleet_load_machine local
+eq "global MAX_WORKERS wins"         "$M_MAX_WORKERS" "3"
+eq "global MIN_FREE_MB wins"         "$M_MIN_FREE_MB" "1024"
+eq "global MAX_WORKER_WALL_SEC wins" "$M_MAX_WORKER_WALL_SEC" "3600"
 
 # Per-machine file wins over the global default.
 cat > "$FLEET_HOME/machines/vm.env" <<EOF
 MACHINE_HOST="vm.invalid"
 MACHINE_MAX_WORKERS=10
 MACHINE_MIN_FREE_MB=4096
+MACHINE_MAX_WORKER_WALL_SEC=1800
 EOF
-MAX_WORKERS=3 fleet_load_machine vm
-eq "machine MAX_WORKERS wins over global" "$M_MAX_WORKERS" "10"
-eq "machine MIN_FREE_MB wins over global" "$M_MIN_FREE_MB" "4096"
+MAX_WORKERS=3 MAX_WORKER_WALL_SEC=3600 fleet_load_machine vm
+eq "machine MAX_WORKERS wins over global"         "$M_MAX_WORKERS" "10"
+eq "machine MIN_FREE_MB wins over global"         "$M_MIN_FREE_MB" "4096"
+eq "machine MAX_WORKER_WALL_SEC wins over global" "$M_MAX_WORKER_WALL_SEC" "1800"
 # A key the machine file omits still falls back to global/built-in.
 MIN_FREE_DISK_MB=7777 fleet_load_machine vm
 eq "machine omits disk -> global"         "$M_MIN_FREE_DISK_MB" "7777"
@@ -56,10 +63,12 @@ eq "machine omits disk -> global"         "$M_MIN_FREE_DISK_MB" "7777"
 cat > "$FLEET_HOME/machines/local.env" <<EOF
 MACHINE_HOST="local"
 MACHINE_MAX_WORKERS=1
+MACHINE_MAX_WORKER_WALL_SEC=900
 EOF
-MAX_WORKERS=9 fleet_load_machine local
-eq "local.env MAX_WORKERS wins"  "$M_MAX_WORKERS" "1"
-eq "local.env keeps M_LOCAL"     "$M_LOCAL" "1"
+MAX_WORKERS=9 MAX_WORKER_WALL_SEC=3600 fleet_load_machine local
+eq "local.env MAX_WORKERS wins"         "$M_MAX_WORKERS" "1"
+eq "local.env MAX_WORKER_WALL_SEC wins" "$M_MAX_WORKER_WALL_SEC" "900"
+eq "local.env keeps M_LOCAL"            "$M_LOCAL" "1"
 rm -f "$FLEET_HOME/machines/local.env"
 
 # ---- 2. fleet_guard decisions (stub the probe: "count ram_mb disk_mb") ----
@@ -70,10 +79,10 @@ M_NAME=test M_LOCAL=1
 guard_rc() { local rc=0; fleet_guard 2>/dev/null || rc=$?; echo "$rc"; }
 
 force="" FLEET_NO_GUARD=""
-M_MAX_WORKERS=0 M_MIN_FREE_MB=0 M_MIN_FREE_DISK_MB=0
+M_MAX_WORKERS=0 M_MIN_FREE_MB=0 M_MIN_FREE_DISK_MB=0 M_MAX_WORKER_WALL_SEC=0
 eq "all limits off -> allow" "$(guard_rc)" "0"
 
-M_MAX_WORKERS=6 M_MIN_FREE_MB=2048 M_MIN_FREE_DISK_MB=5120
+M_MAX_WORKERS=6 M_MIN_FREE_MB=2048 M_MIN_FREE_DISK_MB=5120 M_MAX_WORKER_WALL_SEC=0
 PROBE_OUT="2 8000 50000"; eq "under all limits -> allow" "$(guard_rc)" "0"
 PROBE_OUT="6 8000 50000"; eq "count at cap -> refuse"      "$(guard_rc)" "2"
 PROBE_OUT="7 8000 50000"; eq "count over cap -> refuse"    "$(guard_rc)" "2"
@@ -160,7 +169,7 @@ echo "[5b] MAX_WORKERS=1, 5 concurrent create attempts -> exactly 1 admitted"
 COUNTER="$TMP/live-count"; echo 0 > "$COUNTER"
 RESULTS="$TMP/attempt-results.log"; : > "$RESULTS"
 guard_probe() { echo "$(cat "$COUNTER") 8000 50000"; }
-M_NAME=test M_LOCAL=1 M_MAX_WORKERS=1 M_MIN_FREE_MB=0 M_MIN_FREE_DISK_MB=0
+M_NAME=test M_LOCAL=1 M_MAX_WORKERS=1 M_MIN_FREE_MB=0 M_MIN_FREE_DISK_MB=0 M_MAX_WORKER_WALL_SEC=0
 
 attempt_create() {
   local id="$1"
@@ -182,6 +191,74 @@ wait
 admits="$(grep -c '^admit ' "$RESULTS")"
 eq "exactly one attempt admitted"        "$admits" "1"
 eq "live-count landed on MAX_WORKERS (1)" "$(cat "$COUNTER")" "1"
+
+# ---- 6. per-worker wall-clock budget (MAX_WORKER_WALL_SEC) ----------------
+# .status is written "running" at dispatch launch and flipped only at done, so
+# its mtime is the launch-timestamp proxy the guard reads — no new
+# instrumentation. Default 0 keeps existing fleets unchanged.
+echo "[6] MAX_WORKER_WALL_SEC (stuck/runaway admission refuse)"
+
+mkdir -p "$FLEET_HOME/dispatch/proj-a" "$FLEET_HOME/dispatch/proj-b"
+# Fresh running status: under budget -> allow.
+printf 'running' > "$FLEET_HOME/dispatch/proj-a/fresh.status"
+# Stale running status (mtime pushed back): over budget -> refuse.
+printf 'running' > "$FLEET_HOME/dispatch/proj-b/stale.status"
+touch -d '2 hours ago' "$FLEET_HOME/dispatch/proj-b/stale.status"
+# Done status must never trip the wall check (finished workers are not runaway).
+printf 'done rc=0' > "$FLEET_HOME/dispatch/proj-a/finished.status"
+touch -d '3 hours ago' "$FLEET_HOME/dispatch/proj-a/finished.status"
+
+PROBE_OUT="0 8000 50000"   # under count/RAM/disk so only the wall check can refuse
+M_NAME=test M_LOCAL=1 M_MAX_WORKERS=0 M_MIN_FREE_MB=0 M_MIN_FREE_DISK_MB=0
+
+M_MAX_WORKER_WALL_SEC=0
+eq "wall off (0) with stale running -> allow" "$(guard_rc)" "0"
+
+M_MAX_WORKER_WALL_SEC=3600   # 1h budget; stale is 2h old
+eq "stale running over wall -> refuse" "$(guard_rc)" "2"
+
+# Only the fresh one (and a done file) remain — under budget -> allow.
+rm -f "$FLEET_HOME/dispatch/proj-b/stale.status"
+eq "fresh running under wall -> allow" "$(guard_rc)" "0"
+
+# Remote target skips the local status scan (status lives on the box).
+mkdir -p "$FLEET_HOME/dispatch/proj-b"
+printf 'running' > "$FLEET_HOME/dispatch/proj-b/stale.status"
+touch -d '2 hours ago' "$FLEET_HOME/dispatch/proj-b/stale.status"
+M_LOCAL=0
+eq "remote skips local wall check -> allow" "$(guard_rc)" "0"
+M_LOCAL=1
+
+# ---- 6b. E2E: fleet dispatch refuses when a stuck .status trips the wall ----
+echo "[6b] fleet dispatch refuses at the wall-clock budget (no launch)"
+# Drop every fixture .status from [6] so only the intentional stuck file remains
+# (the wall check is machine-wide across $FLEET_ROOT/dispatch/*/).
+rm -rf "$FLEET_HOME/dispatch"
+rm -rf "$TMP/wt"/* 2>/dev/null || true
+mkdir -p "$TMP/code" "$TMP/wt" "$FLEET_HOME/dispatch/x"
+printf 'running' > "$FLEET_HOME/dispatch/x/stuck.status"
+touch -d '2 hours ago' "$FLEET_HOME/dispatch/x/stuck.status"
+cat > "$FLEET_HOME/projects/x.env" <<EOF
+CODE_REPO="$TMP/code"
+WT_HOME="$TMP/wt"
+AGENTS="claude"
+MIN_FREE_DISK_MB=0
+MIN_FREE_MB=0
+MAX_WORKERS=0
+MAX_WORKER_WALL_SEC=60
+EOF
+out="$("$REPO/bin/fleet" --project x dispatch walltest "do a thing" 2>&1)"; rc=$?
+eq "dispatch wall exits non-zero" "$rc" "2"
+if printf '%s' "$out" | grep -q 'wall-clock budget'; then ok "dispatch prints wall-clock refusal"
+else bad "dispatch wall refusal message missing; got: $out"; fi
+if [ -z "$(ls -A "$TMP/wt" 2>/dev/null)" ]; then ok "no worktree created (wall refused before launch)"
+else bad "a worktree was created despite wall refusal"; fi
+# Clearing the stuck status lets the count/RAM/disk path through (then fails
+# later for lack of a real repo — only assert the guard no longer blocks).
+rm -f "$FLEET_HOME/dispatch/x/stuck.status"
+out="$("$REPO/bin/fleet" --project x dispatch walltest "do a thing" 2>&1)"; rc=$?
+if printf '%s' "$out" | grep -q 'wall-clock budget\|fleet-guard'; then bad "wall still tripped after clearing status: $out"
+else ok "cleared status no longer trips wall"; fi
 
 echo
 echo "guard tests: $pass passed, $fail failed"

@@ -117,22 +117,26 @@ both `fleet dispatch` (headless) and `fleet w` (interactive), on whichever machi
 you target, each checked against that machine's own limits — a remote `dispatch`
 runs the guard inside the container, where the worker actually spawns.
 
-Three per-machine limits (a `0` turns that check off):
+Three per-machine limits (a `0` turns that check off), plus an optional
+per-worker wall-clock budget:
 
 | key | what it caps | built-in default |
 |-----|--------------|------------------|
-| `MAX_WORKERS` | live workers on the machine | 6 |
+| `MAX_WORKERS` | live workers on the machine (concurrency) | 6 |
 | `MIN_FREE_MB` | free RAM (`MemAvailable`) floor, MB | 2048 |
 | `MIN_FREE_DISK_MB` | free disk on `WT_HOME`'s filesystem, MB | 5120 |
+| `MAX_WORKER_WALL_SEC` | refuse new admissions while any still-`running` dispatch is older than N seconds | 0 (off) |
 
 Set them where they belong, **most-specific wins**:
 
 1. Per machine — `MACHINE_MAX_WORKERS` / `MACHINE_MIN_FREE_MB` /
-   `MACHINE_MIN_FREE_DISK_MB` in `~/.config/fleet/machines/<name>.env` (size to
-   the box: a big VM tolerates far more than a laptop). The local box can carry
-   its own via a `machines/local.env` with `MACHINE_HOST=local`.
-2. Globally — `MAX_WORKERS` / `MIN_FREE_MB` / `MIN_FREE_DISK_MB` in
-   `~/.config/fleet/default.env` (all projects) or a project `.env`.
+   `MACHINE_MIN_FREE_DISK_MB` / `MACHINE_MAX_WORKER_WALL_SEC` in
+   `~/.config/fleet/machines/<name>.env` (size to the box: a big VM tolerates far
+   more than a laptop). The local box can carry its own via a `machines/local.env`
+   with `MACHINE_HOST=local`.
+2. Globally — `MAX_WORKERS` / `MIN_FREE_MB` / `MIN_FREE_DISK_MB` /
+   `MAX_WORKER_WALL_SEC` in `~/.config/fleet/default.env` (all projects) or a
+   project `.env`.
 3. Built-in defaults (above) when nothing is set.
 
 The worker **count** is machine-wide: it sums the live windows across every
@@ -143,6 +147,18 @@ floors read `/proc/meminfo` and `df` directly, so they already see everything on
 the machine. On a remote machine the probe runs over the same ssh+docker
 transport as the session; if it can't measure RAM/disk (probe failure) it skips
 that floor rather than blocking (the count still applies).
+
+**Wall-clock budget (stuck / runaway signal).** `MAX_WORKER_WALL_SEC` is still
+admission-only — it does not kill a running worker. On each new
+`fleet dispatch` / `fleet w`, if any dispatch `.status` still contains `running`
+and its mtime is older than the ceiling, the guard refuses the new launch and
+tells you to free the stuck slot (`fleet del` / `prune`) first. The `.status`
+file is written once at launch and flipped only at exit, so its mtime is a
+launch-timestamp proxy with no new instrumentation (no turns/tokens yet). Default
+`0` (off) keeps existing fleets unchanged; set it on a constrained box when a
+long-running dispatch should block further fan-out. Interactive `fleet w` panes
+do not write a `.status`, so they never trip this check. Remote targets see it
+when the guard runs inside the container (remote `dispatch` already does).
 
 When a limit trips, `fleet` prints what tripped and the current usage, then
 exits non-zero — a coordinator should wait for a worker to finish

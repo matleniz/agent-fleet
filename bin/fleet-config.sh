@@ -40,13 +40,20 @@ FLEET_MACHINES="$FLEET_ROOT/machines"
 
 # Resource guard rails — built-in defaults for the per-machine limits enforced
 # before a worker launches (fleet_guard in bin/fleet). Each is overridable per
-# machine (MACHINE_MAX_WORKERS / MACHINE_MIN_FREE_MB / MACHINE_MIN_FREE_DISK_MB
-# in machines/<name>.env) and globally (MAX_WORKERS / MIN_FREE_MB /
-# MIN_FREE_DISK_MB in default.env or a project .env). A limit of 0 disables that
-# check. See docs/07-machine-and-solo.md.
-FLEET_DEF_MAX_WORKERS=6         # live workers per machine
+# machine (MACHINE_MAX_WORKERS / MACHINE_MIN_FREE_MB / MACHINE_MIN_FREE_DISK_MB /
+# MACHINE_MAX_WORKER_WALL_SEC in machines/<name>.env) and globally (MAX_WORKERS /
+# MIN_FREE_MB / MIN_FREE_DISK_MB / MAX_WORKER_WALL_SEC in default.env or a
+# project .env). A limit of 0 disables that check. See docs/07-machine-and-solo.md.
+FLEET_DEF_MAX_WORKERS=6         # live workers per machine (concurrency cap)
 FLEET_DEF_MIN_FREE_MB=2048      # MemAvailable floor, MB
 FLEET_DEF_MIN_FREE_DISK_MB=5120 # free disk floor on WT_HOME's filesystem, MB
+# Per-worker wall-clock budget (admission only). When >0, fleet_guard refuses a
+# NEW launch if any still-running dispatch .status is older than this many
+# seconds — a stuck/runaway signal without a watchdog daemon or kill. Uses the
+# existing .status mtime (written "running" at launch, flipped only at done).
+# 0 = off (retrocompatible). Does not kill the runaway; free the slot yourself
+# (fleet del / prune) then retry. See docs/07-machine-and-solo.md.
+FLEET_DEF_MAX_WORKER_WALL_SEC=0
 
 # Per-worker V8 heap cap (anti-crash on small boxes). The admission guard above
 # only gates at launch; once running, node-based agent CLIs leak unbounded and can
@@ -382,6 +389,7 @@ fleet_load_machine() {
   M_MAX_WORKERS="${MAX_WORKERS:-$FLEET_DEF_MAX_WORKERS}"
   M_MIN_FREE_MB="${MIN_FREE_MB:-$FLEET_DEF_MIN_FREE_MB}"
   M_MIN_FREE_DISK_MB="${MIN_FREE_DISK_MB:-$FLEET_DEF_MIN_FREE_DISK_MB}"
+  M_MAX_WORKER_WALL_SEC="${MAX_WORKER_WALL_SEC:-$FLEET_DEF_MAX_WORKER_WALL_SEC}"
   # Implicit local box (no machines/local.env): use the global/built-in limits.
   # A machines/local.env (MACHINE_HOST=local) falls through to the file branch so
   # the box can carry its own limits, distinct from a project's defaults.
@@ -393,6 +401,7 @@ fleet_load_machine() {
   if [ -f "$f" ]; then
     local MACHINE_HOST="" MACHINE_CONTAINER="" MACHINE_TMUX="" MACHINE_ENGINE_DIR="" MACHINE_PROJECT=""
     local MACHINE_MAX_WORKERS="" MACHINE_MIN_FREE_MB="" MACHINE_MIN_FREE_DISK_MB=""
+    local MACHINE_MAX_WORKER_WALL_SEC=""
     . "$f"
     M_HOST="$MACHINE_HOST"
     [ -n "$M_HOST" ] || { echo "error: machine '$name': set MACHINE_HOST in $f" >&2; return 2; }
@@ -402,6 +411,7 @@ fleet_load_machine() {
     M_MAX_WORKERS="${MACHINE_MAX_WORKERS:-$M_MAX_WORKERS}"
     M_MIN_FREE_MB="${MACHINE_MIN_FREE_MB:-$M_MIN_FREE_MB}"
     M_MIN_FREE_DISK_MB="${MACHINE_MIN_FREE_DISK_MB:-$M_MIN_FREE_DISK_MB}"
+    M_MAX_WORKER_WALL_SEC="${MACHINE_MAX_WORKER_WALL_SEC:-$M_MAX_WORKER_WALL_SEC}"
     if [ "$M_HOST" = local ]; then
       M_LOCAL=1; M_TMUX="${MACHINE_TMUX:-${LOCAL_TMUX:-fleet-$proj}}"
     fi
@@ -469,6 +479,28 @@ guard_probe() {  # -> "count ram_mb disk_mb"  (reads M_LOCAL/M_TMUX/M_HOST/M_CON
   fi
 }
 
+# Age (seconds) of the oldest still-running dispatch .status under
+# $FLEET_ROOT/dispatch/*/ — machine-wide, same scope as MAX_WORKERS. A dispatch
+# writes "running" once at launch and flips to "done rc=N" only at exit, so the
+# file mtime is a launch-timestamp proxy with no new instrumentation. Prints 0
+# when nothing is running / the tree is missing. Local filesystem only (remote
+# dispatch already runs fleet_guard inside the container, where FLEET_ROOT is
+# local to that box).
+guard_oldest_running_sec() {
+  local oldest=0 now age f st mt
+  now="$(date +%s)"
+  [ -d "${FLEET_ROOT:-}/dispatch" ] || { echo 0; return 0; }
+  for f in "$FLEET_ROOT"/dispatch/*/*.status; do
+    [ -f "$f" ] || continue
+    st="$(cat "$f" 2>/dev/null || true)"
+    [ "$st" = "running" ] || continue
+    mt="$(stat -c %Y "$f" 2>/dev/null)" || continue
+    age=$((now - mt))
+    [ "$age" -gt "$oldest" ] && oldest="$age"
+  done
+  echo "$oldest"
+}
+
 # Fail-fast (the coordinator waits for a slot and retries); bypass with --force
 # (the caller's $force) or FLEET_NO_GUARD=1. Reads M_* — call AFTER
 # fleet_load_machine. Returns 2 (and explains on stderr) when a limit trips.
@@ -476,22 +508,34 @@ fleet_guard() {
   [ -n "${force:-}" ] && return 0
   [ "${FLEET_NO_GUARD:-}" = 1 ] && return 0
   local maxw="${M_MAX_WORKERS:-0}" minmb="${M_MIN_FREE_MB:-0}" mindisk="${M_MIN_FREE_DISK_MB:-0}"
-  [ "$maxw" = 0 ] && [ "$minmb" = 0 ] && [ "$mindisk" = 0 ] && return 0   # all off
-  local usage count ram disk
+  local maxwall="${M_MAX_WORKER_WALL_SEC:-0}"
+  maxwall="${maxwall//[!0-9]/}"; maxwall="${maxwall:-0}"
+  [ "$maxw" = 0 ] && [ "$minmb" = 0 ] && [ "$mindisk" = 0 ] && [ "$maxwall" = 0 ] \
+    && return 0   # all off
+  local usage count ram disk oldest=0
   usage="$(guard_probe)"
   read -r count ram disk <<<"$usage"
   count="${count//[!0-9]/}"; ram="${ram//[!0-9]/}"; disk="${disk//[!0-9]/}"
   count="${count:-0}"; ram="${ram:-0}"; disk="${disk:-0}"
+  # Wall-clock budget: local only (status files live on the box where the
+  # worker runs; remote dispatch re-enters here inside the container).
+  if [ "$maxwall" != 0 ] && [ "${M_LOCAL:-0}" = 1 ]; then
+    oldest="$(guard_oldest_running_sec)"
+    oldest="${oldest//[!0-9]/}"; oldest="${oldest:-0}"
+  fi
   local why=""
   [ "$maxw" != 0 ] && [ "$count" -ge "$maxw" ] && why="workers ${count}/${maxw} at cap"
   [ -z "$why" ] && [ "$minmb" != 0 ] && [ "$ram" -gt 0 ] && [ "$ram" -lt "$minmb" ] \
     && why="RAM ${ram}MB < ${minmb}MB floor"
   [ -z "$why" ] && [ "$mindisk" != 0 ] && [ "$disk" -gt 0 ] && [ "$disk" -lt "$mindisk" ] \
     && why="disk ${disk}MB < ${mindisk}MB floor"
+  [ -z "$why" ] && [ "$maxwall" != 0 ] && [ "$oldest" -ge "$maxwall" ] \
+    && why="oldest running worker ${oldest}s >= ${maxwall}s wall-clock budget"
   [ -z "$why" ] && return 0
   {
     echo "error: [fleet-guard ${M_NAME:-?}] refused: $why"
     echo "  now: ${count} workers, ${ram}MB RAM free, ${disk}MB disk free on ${M_NAME:-?}"
+    [ "$maxwall" != 0 ] && echo "  oldest running dispatch: ${oldest}s (budget ${maxwall}s)"
     echo "  free a slot: fleet del <name> (drops worktree + window), or tmux kill-window"
     echo "  on a leftover pane. Finished dispatches rename to _done-<name> and no longer"
     echo "  count — if you still hit the cap, an interactive fleet w pane is open."
