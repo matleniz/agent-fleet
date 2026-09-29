@@ -32,6 +32,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -153,6 +154,72 @@ def parse_candidates(list_str):
     return candidates
 
 
+def run_route_scorer(scorer_cmd, task_text, explain=False):
+    """Run an external ROUTE_SCORER hook command with the task prompt.
+
+    Returns a dict with optional keys: 'difficulty', 'kind', 'candidate'.
+    Falls back gracefully on non-zero exit or error.
+    """
+    if not scorer_cmd:
+        return {}
+    try:
+        cmd = f"{scorer_cmd} {shlex.quote(task_text)}"
+        p = subprocess.run(
+            cmd,
+            input=task_text,
+            text=True,
+            capture_output=True,
+            shell=True,
+            timeout=15,
+        )
+        if p.returncode != 0:
+            if explain:
+                sys.stderr.write(f"scorer: ROUTE_SCORER exited with rc={p.returncode}: {p.stderr.strip()}\n")
+            return {}
+        raw = p.stdout.strip()
+        if explain:
+            sys.stderr.write(f"scorer: ROUTE_SCORER output: '{raw}'\n")
+        return parse_scorer_output(raw)
+    except Exception as exc:
+        if explain:
+            sys.stderr.write(f"scorer: failed to execute ROUTE_SCORER: {exc}\n")
+        return {}
+
+
+def parse_scorer_output(raw):
+    """Parse scorer output into difficulty, kind, or candidate."""
+    result = {}
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if not lines:
+        return result
+
+    for line in lines:
+        m_kind = re.search(r"\bkind\s*[:=]\s*([a-zA-Z0-9_-]+)", line, re.IGNORECASE)
+        if m_kind:
+            result["kind"] = m_kind.group(1).lower()
+
+        m_diff = re.search(r"\b(?:difficulty\s*[:=]\s*)?(easy|medium|hard)\b", line, re.IGNORECASE)
+        if m_diff and not result.get("difficulty"):
+            result["difficulty"] = m_diff.group(1).lower()
+
+        m_score = re.search(r"\b(?:score\s*[:=]\s*)?([0-9]+(?:\.[0-9]+)?)\b", line, re.IGNORECASE)
+        if m_score and not result.get("difficulty"):
+            try:
+                val = float(m_score.group(1))
+                if val <= 1.0:
+                    result["difficulty"] = "easy" if val < 0.35 else ("medium" if val < 0.70 else "hard")
+                else:
+                    result["difficulty"] = "easy" if val < 35 else ("medium" if val < 70 else "hard")
+            except ValueError:
+                pass
+
+        m_cand = re.search(r"\b(?:candidate\s*[:=]\s*)?([a-zA-Z0-9_-]+:[a-zA-Z0-9_.-]+)\b", line, re.IGNORECASE)
+        if m_cand:
+            result["candidate"] = m_cand.group(1)
+
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Route coordinator tasks to pack+model via configurable preferences."
@@ -189,9 +256,31 @@ def main():
         sys.stderr.write(f"error: max dispatch depth ({max_depth}) reached (current={current_depth})\n")
         sys.exit(2)
 
+    # Resolve task text if provided
+    task_text = args.task or ""
+    if not task_text and args.task_file and os.path.isfile(args.task_file):
+        try:
+            with open(args.task_file) as f:
+                task_text = f.read()
+        except OSError:
+            task_text = ""
+
     # Determine candidate preference list
     difficulty = args.difficulty
     kind = args.kind
+
+    # If difficulty is not set, query ROUTE_SCORER hook if configured
+    scorer_cmd = conf.get("ROUTE_SCORER", "").strip()
+    if not difficulty and scorer_cmd and (task_text or not args.task_file):
+        scorer_res = run_route_scorer(scorer_cmd, task_text, explain=args.explain)
+        if scorer_res.get("difficulty"):
+            difficulty = scorer_res["difficulty"]
+            if args.explain:
+                sys.stderr.write(f"scorer: difficulty resolved to {difficulty}\n")
+        if not kind and scorer_res.get("kind"):
+            kind = scorer_res["kind"]
+            if args.explain:
+                sys.stderr.write(f"scorer: kind resolved to {kind}\n")
 
     if args.escalate:
         list_str = conf.get("ROUTE_ESCALATE", DEFAULT_ROUTE_CONF["ROUTE_ESCALATE"])
