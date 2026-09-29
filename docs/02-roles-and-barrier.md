@@ -75,7 +75,9 @@ fleet attach                     # attach the machine's tmux; fleet ls for statu
 --force`, claude `claude -p --permission-mode auto`), so the worker has
 real shell/tool access **and** the read-only-hub barrier still holds. Hand-rolling
 the launch instead (e.g. `agent -p --trust`, which is not a real cursor flag) is
-what produces a worker with no shell; go through `dispatch`.
+what produces a worker with no shell; go through `dispatch`. `dispatch --model M`
+is honored by every bundled pack (flag per pack in [06](06-token-economy.md)); a
+pack that cannot honor it warns instead of ignoring it silently.
 
 More generally: **the posture rides the launch**. Permission mode, barrier, MCP
 profile, resource guard, heap cap all exist only because `fleet` applied them at

@@ -24,7 +24,9 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
   `pack_worker_setup`, `pack_barrier_files`, `pack_install`) plus optional
   `pack_doctor`, optional `pack_global_setup` (wire this CLI's per-user
   global-instructions file for `fleet global`; packs whose CLI has no global
-  mechanism omit it), and optional `pack_mcp_profile <dest> <allowlist>` (apply
+  mechanism omit it), optional `PACK_MODEL_FLAG` (the CLI flag that carries the per-launch model of
+  `pack_launch_headless <prompt> <model>`; unset = model ignored, dispatch warns),
+  and optional `pack_mcp_profile <dest> <allowlist>` (apply
   the project's `WORKER_MCP` lean-MCP allowlist to a worktree; packs whose CLI
   can't scope MCP per project omit it), and optional `pack_chat_history <hub>
   <wt_home> <since>` (enumerate every recorded transcript for a project over a
