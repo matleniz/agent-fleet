@@ -158,7 +158,7 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    fleet route --difficulty hard  # resolve route for hard difficulty
    fleet wait my-task     # block until a dispatched worker finishes (rc 0/1; exits 3 on stall;
                           #   prints parseable summary: duration, commits, pr; --json supported)
-   fleet retry my-task    # resume a stalled/stopped worker (or --fallback to next pack in AGENTS)
+   fleet retry my-task    # resume a stalled/stopped worker (or --fallback to next routed pack / next in AGENTS)
    fleet ls               # worktrees (session markers + [dispatch: done rc=N / running (stalled) /
                           #   blocked-on-foreground-process / done-without-deliverable]);
                           #   also lists orphan tmux windows (no worktree /
@@ -248,7 +248,7 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
    When opt-in deliverables (`--deliverable pr|push`) are required, finishing without
    pushing or opening a PR reports `done-without-deliverable`. When auto-retry is enabled
    (`WORKER_MAX_RETRIES`), stalled workers or quota failures are automatically re-dispatched
-   with a resumption preamble, falling back to the next pack in `AGENTS` after N attempts.
+   with a resumption preamble, falling back to the next routed pack (or the next in `AGENTS`) after N attempts.
    See [docs/07](docs/07-machine-and-solo.md#worker-health-stall-detection-and-watchdog-supervision).
 
 **Working solo is fine.** You do not need workers, a queue, or routines to

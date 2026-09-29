@@ -1227,8 +1227,10 @@ dispatch_status_label() {  # <worker-name> [<worktree-path>] -> "[dispatch: runn
 # Provenance sidecar (WS3): record which coordinator spawned a worker and how.
 # Read by `fleet status` to rebuild the coordinator -> workers tree. A worker
 # with no parent (a bare `fleet w` started by a human) is "independent".
-write_worker_meta() {  # <worker-name> <mode: dispatch|interactive> [deliverable] [pack]
-  local name="$1" mode="$2" deliv="${3:-}" pack="${4:-}" sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
+write_worker_meta() {  # <worker-name> <mode: dispatch|interactive> [deliverable] [pack] [difficulty] [kind] [escalate]
+  local name="$1" mode="$2" deliv="${3:-}" pack="${4:-}"
+  local diff="${5:-}" kind="${6:-}" esc="${7:-}"
+  local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
   {
     printf 'machine=%s\n'     "${FLEET_MACHINE:-local}"
     printf 'parent=%s\n'      "${FLEET_COORDINATOR:-}"
@@ -1236,6 +1238,9 @@ write_worker_meta() {  # <worker-name> <mode: dispatch|interactive> [deliverable
     printf 'created=%s\n'     "$(date -u +%FT%TZ 2>/dev/null || echo '')"
     [ -n "$deliv" ] && printf 'deliverable=%s\n' "$deliv"
     [ -n "$pack" ]  && printf 'pack=%s\n'        "$pack"
+    [ -n "$diff" ]  && printf 'difficulty=%s\n'  "$diff"
+    [ -n "$kind" ]  && printf 'kind=%s\n'        "$kind"
+    [ -n "$esc" ]   && printf 'escalate=%s\n'    "$esc"
     printf 'retries=0\n'
   } > "$sdir/$name.meta"
 }
@@ -1340,7 +1345,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
   fi
   local sdir; sdir="$(dispatch_state_dir)"; mkdir -p "$sdir"
   printf '%s\n' "$task" > "$sdir/$name.task"
-  write_worker_meta "$name" dispatch "$deliverable_req" "$agent"
+  write_worker_meta "$name" dispatch "$deliverable_req" "$agent" "$difficulty" "$kind" "$escalate"
   local taskfile; taskfile="$(mktemp "${TMPDIR:-/tmp}/fleet-task.XXXXXX")"
   printf '%s\n' "$task" > "$taskfile"
   printf 'running' > "$sdir/$name.status"
@@ -1366,6 +1371,74 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
   fi
   echo "  wake coordinator: run 'fleet wait $name' in background to wake on exit"
   echo "  monitor : fleet ls   ·   watch: fleet attach   ·   block: fleet wait $name"
+}
+
+worker_has_quota_error() {  # <worker-name> [pack] [out_file] [pane_target]
+  local name="$1" pack="${2:-}" out_file="${3:-}" pane_target="${4:-}"
+  local sdir; sdir="$(dispatch_state_dir)"
+  local f="$sdir/$name.status"
+  case "$(cat "$f" 2>/dev/null)" in
+    done\ rc=0*) return 1 ;;
+  esac
+
+  if [ -z "$pack" ] && [ -f "$sdir/$name.meta" ]; then
+    pack="$(sed -n 's/^pack=//p' "$sdir/$name.meta" 2>/dev/null | head -1)"
+  fi
+  [ -z "$pack" ] && pack="$(fleet_default_agent)"
+  pack="${pack%%:*}"
+
+  # 1. Consult quota ledger
+  local ledger="$FLEET_ROOT/quota/$pack"
+  if [ -f "$ledger" ]; then
+    local exp now
+    exp="$(cat "$ledger" 2>/dev/null || true)"
+    now="$(date +%s)"
+    if [ -n "$exp" ] && [ "$exp" -gt "$now" ] 2>/dev/null; then
+      return 0
+    else
+      rm -f "$ledger" 2>/dev/null || true
+    fi
+  fi
+  # 2. Check pack quota pattern
+  fleet_load_pack "$pack" 2>/dev/null || true
+  local quota_pat=""
+  if declare -F pack_quota_pattern >/dev/null 2>&1; then
+    quota_pat="$(pack_quota_pattern 2>/dev/null || true)"
+  fi
+  [ -z "$quota_pat" ] && return 1
+
+  local quota_matched=0
+  if [ -n "$out_file" ] && [ -f "$out_file" ] && grep -q -E "$quota_pat" "$out_file" 2>/dev/null; then
+    quota_matched=1
+  elif [ -n "$pane_target" ] && tmux capture-pane -p -t "$pane_target" 2>/dev/null | grep -q -E "$quota_pat"; then
+    quota_matched=1
+  else
+    local LT
+    LT="$(dispatch_tmux)"
+    if tmux capture-pane -pt "$LT:_done-$name" 2>/dev/null | grep -q -E "$quota_pat"; then
+      quota_matched=1
+    elif tmux capture-pane -pt "$LT:$name" 2>/dev/null | grep -q -E "$quota_pat"; then
+      quota_matched=1
+    fi
+  fi
+
+  # 3. Write to quota ledger and log event if matched
+  if [ "$quota_matched" -eq 1 ]; then
+    local ttl="${ROUTE_QUOTA_TTL_SEC:-${FLEET_DEF_ROUTE_QUOTA_TTL_SEC:-21600}}"
+    local now_epoch exp_epoch
+    now_epoch="$(date +%s)"
+    exp_epoch="$((now_epoch + ttl))"
+    mkdir -p "$FLEET_ROOT/quota"
+    printf '%s\n' "$exp_epoch" > "$FLEET_ROOT/quota/$pack"
+    echo "[fleet] pack '$pack' quota exceeded (pattern '$quota_pat' matched) — recorded in $FLEET_ROOT/quota/$pack (expires in ${ttl}s)" >&2
+    if [ -d "$sdir" ]; then
+      printf '%s %s quota-exceeded pack=%s expires=%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$pack" "$exp_epoch" >> "$sdir/events.log"
+      rotate_events_log "$sdir/events.log"
+    fi
+    return 0
+  fi
+
+  return 1
 }
 
 cmd_dispatch_run() {  # internal: foreground headless launch inside a tmux window
@@ -1418,29 +1491,7 @@ $task" "${FLEET_MODEL:-}" ) 2>&1 | tee "$out_file"
   rotate_events_log "$sdir/events.log"   # keep the append-only history bounded
 
   if [ "$rc" -ne 0 ]; then
-    local quota_pat=""
-    if declare -F pack_quota_pattern >/dev/null 2>&1; then
-      quota_pat="$(pack_quota_pattern 2>/dev/null || true)"
-    fi
-    local quota_matched=0
-    if [ -n "$quota_pat" ]; then
-      if grep -q -E "$quota_pat" "$out_file" 2>/dev/null; then
-        quota_matched=1
-      elif [ -n "${TMUX_PANE:-}" ] && tmux capture-pane -p -t "$TMUX_PANE" 2>/dev/null | grep -q -E "$quota_pat"; then
-        quota_matched=1
-      fi
-    fi
-    if [ "$quota_matched" -eq 1 ]; then
-      local ttl="${ROUTE_QUOTA_TTL_SEC:-${FLEET_DEF_ROUTE_QUOTA_TTL_SEC:-21600}}"
-      local now_epoch exp_epoch
-      now_epoch="$(date +%s)"
-      exp_epoch="$((now_epoch + ttl))"
-      mkdir -p "$FLEET_ROOT/quota"
-      printf '%s\n' "$exp_epoch" > "$FLEET_ROOT/quota/$agent"
-      echo "[fleet] pack '$agent' quota exceeded (pattern '$quota_pat' matched) — recorded in $FLEET_ROOT/quota/$agent (expires in ${ttl}s)" >&2
-      printf '%s %s quota-exceeded pack=%s expires=%s\n' "$(date -u +%FT%TZ 2>/dev/null)" "$name" "$agent" "$exp_epoch" >> "$sdir/events.log"
-      rotate_events_log "$sdir/events.log"
-    fi
+    worker_has_quota_error "$name" "$agent" "$out_file" "${TMUX_PANE:-}" || true
   fi
   rm -f "$out_file"
   # Human's phone ping (best effort), same channel as the pack Stop hooks.
@@ -1460,30 +1511,59 @@ cmd_attach() {  # attach the local machine's tmux session (coordinator + workers
   session_attach
 }
 
-worker_next_agent() {  # <current_pack> -> prints next pack in AGENTS or returns 1
-  local cur="$1" found=0 a
+worker_next_agent() {  # <current_pack> [worker-name] -> prints next pack in route or AGENTS
+  local cur="$1" name="${2:-}"
+  local cur_agent="${cur%%:*}"
+
+  local routing_configured=0
+  if [ -n "$name" ]; then
+    local sdir; sdir="$(dispatch_state_dir)"
+    if [ -f "$sdir/$name.meta" ] && grep -q -E '^(route=|difficulty=|kind=|escalate=)' "$sdir/$name.meta" 2>/dev/null; then
+      routing_configured=1
+    elif [ -n "${ROUTE_EASY:-}" ] || [ -n "${ROUTE_MEDIUM:-}" ] || [ -n "${ROUTE_HARD:-}" ] || [ -f "${FLEET_ROOT:-$FLEET_HOME}/routing.env" ]; then
+      routing_configured=1
+    elif [ -n "${CONF:-}" ] && [ -f "$CONF" ] && grep -q -E '^ROUTE_(EASY|MEDIUM|HARD)=' "$CONF" 2>/dev/null; then
+      routing_configured=1
+    fi
+  fi
+
+  if [ "$routing_configured" -eq 1 ]; then
+    local sdir; sdir="$(dispatch_state_dir)"
+    local meta_file="$sdir/$name.meta"
+    local r_args=()
+    local task_text=""
+    [ -f "$sdir/$name.task" ] && task_text="$(cat "$sdir/$name.task" 2>/dev/null || true)"
+    [ -n "$task_text" ] && r_args+=(--task "$task_text")
+
+    local diff kind esc
+    diff="$(sed -n 's/^difficulty=//p' "$meta_file" 2>/dev/null | head -1)"
+    kind="$(sed -n 's/^kind=//p' "$meta_file" 2>/dev/null | head -1)"
+    esc="$(sed -n 's/^escalate=//p' "$meta_file" 2>/dev/null | head -1)"
+    [ -n "$diff" ] && r_args+=(--difficulty "$diff")
+    [ -n "$kind" ] && r_args+=(--kind "$kind")
+    [ "$esc" = "1" ] && r_args+=(--escalate)
+    r_args+=(--exclude "$cur_agent")
+
+    local sdir_bin="${SELF_DIR:-}"
+    [ -z "$sdir_bin" ] && sdir_bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+    [ -f "$sdir_bin/fleet-route.py" ] || sdir_bin="$(dirname "$(command -v fleet 2>/dev/null || true)")"
+
+    local next_route
+    if [ -f "$sdir_bin/fleet-route.py" ]; then
+      if next_route="$(python3 "$sdir_bin/fleet-route.py" ${PROJ_NAME:+--project "$PROJ_NAME"} "${r_args[@]}" 2>/dev/null)" && [ -n "$next_route" ]; then
+        echo "$next_route"
+        return 0
+      fi
+    fi
+  fi
+
+  local found=0 a
   for a in $(fleet_agents); do
     if [ "$found" -eq 1 ]; then
       echo "$a"; return 0
     fi
-    [ "$a" = "$cur" ] && found=1
+    [ "$a" = "$cur_agent" ] && found=1
   done
-  return 1
-}
-
-worker_has_quota_error() {  # <worker-name>
-  local name="$1" sdir f
-  sdir="$(dispatch_state_dir)"
-  f="$sdir/$name.status"
-  case "$(cat "$f" 2>/dev/null)" in
-    done\ rc=0*) return 1 ;;
-  esac
-  local pane_log LT
-  LT="$(dispatch_tmux)"
-  pane_log="$(tmux capture-pane -pt "$LT:_done-$name" 2>/dev/null || tmux capture-pane -pt "$LT:$name" 2>/dev/null || true)"
-  case "$pane_log" in
-    *"quota"*|*"Quota"*|*"rate limit"*|*"Rate limit"*|*"429"*|*"402"*) return 0 ;;
-  esac
   return 1
 }
 
@@ -1508,7 +1588,7 @@ worker_trigger_retry_or_fallback() {  # <worker-name> <reason> -> 0 if re-dispat
   mkdir -p "$sdir"
   local log_file="$sdir/supervision.log"
 
-  if [ "$cur_retries" -lt "$max_retries" ]; then
+  if [ "$reason" != "quota" ] && [ "$cur_retries" -lt "$max_retries" ]; then
     local new_retries=$((cur_retries + 1))
     sed -i "s/^retries=.*/retries=$new_retries/" "$meta_file" 2>/dev/null || echo "retries=$new_retries" >> "$meta_file"
     printf '%s %s retry pack=%s attempt=%s/%s reason=%s\n' \
@@ -1522,8 +1602,15 @@ worker_trigger_retry_or_fallback() {  # <worker-name> <reason> -> 0 if re-dispat
     return 0
   else
     local next_pack
-    next_pack="$(worker_next_agent "$cur_pack")" || true
+    next_pack="$(worker_next_agent "$cur_pack" "$name")" || true
     if [ -n "$next_pack" ]; then
+      local next_agent next_model=""
+      if [[ "$next_pack" == *:* ]]; then
+        next_agent="${next_pack%%:*}"
+        next_model="${next_pack#*:}"
+      else
+        next_agent="$next_pack"
+      fi
       sed -i "s/^pack=.*/pack=$next_pack/" "$meta_file" 2>/dev/null || echo "pack=$next_pack" >> "$meta_file"
       sed -i "s/^retries=.*/retries=0/" "$meta_file" 2>/dev/null || echo "retries=0" >> "$meta_file"
       printf '%s %s fallback from=%s to=%s reason=%s\n' \
@@ -1533,7 +1620,7 @@ worker_trigger_retry_or_fallback() {  # <worker-name> <reason> -> 0 if re-dispat
       local fallback_prompt="RESUMPTION (PACK FALLBACK): You are taking over with agent '$next_pack' after '$cur_pack' stopped ($reason). Inspect worktree in $dest (branch $name) and complete the task.\n\n$original_task"
       local LT; LT="$(dispatch_tmux)"
       tmux kill-window -t "$LT:$name" 2>/dev/null || true
-      agent="$next_pack" cmd_dispatch ${deliv:+--deliverable $deliv} "$name" "$(printf '%b' "$fallback_prompt")"
+      agent="$next_agent" cmd_dispatch ${next_model:+--model $next_model} ${deliv:+--deliverable $deliv} "$name" "$(printf '%b' "$fallback_prompt")"
       return 0
     else
       printf '%s %s exhausted pack=%s reason=%s\n' \
@@ -1566,7 +1653,7 @@ cmd_retry() {  # fleet retry [--fallback] [--pack P] <name>
   elif [ "$fallback" -eq 1 ]; then
     local cur; cur="$(sed -n 's/^pack=//p' "$sdir/$name.meta" 2>/dev/null | head -1)"
     [ -z "$cur" ] && cur="$(fleet_default_agent)"
-    local next; next="$(worker_next_agent "$cur")" || { echo "error: no next pack in AGENTS after $cur" >&2; exit 1; }
+    local next; next="$(worker_next_agent "$cur" "$name")" || { echo "error: no next pack in AGENTS after $cur" >&2; exit 1; }
     sed -i "s/^pack=.*/pack=$next/" "$sdir/$name.meta" 2>/dev/null || echo "pack=$next" >> "$sdir/$name.meta"
     sed -i "s/^retries=.*/retries=0/" "$sdir/$name.meta" 2>/dev/null || echo "retries=0" >> "$sdir/$name.meta"
   fi

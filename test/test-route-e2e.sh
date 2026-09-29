@@ -139,6 +139,28 @@ else
   ok "tmux missing; skip live fallback dispatch"
 fi
 
+echo "[10] quota exit -> ledger -> supervision falls back to the router's next pack"
+SDIR="$FLEET_HOME/dispatch/sandbox"
+printf 'machine=local\nmode=dispatch\npack=mockquota\ndifficulty=easy\nretries=0\n' > "$SDIR/quota-worker.meta"
+printf 'run failing task\n' > "$SDIR/quota-worker.task"
+fb_out="$(
+  export FLEET_ROOT="$FLEET_HOME" PROJ_NAME=sandbox SELF_DIR="$REPO/bin"
+  export WORKER_MAX_RETRIES=1
+  # shellcheck disable=SC1091
+  source "$REPO/bin/fleet-config.sh"
+  fleet_resolve_conf sandbox >/dev/null 2>&1
+  rotate_events_log() { :; }
+  cmd_dispatch() { echo "dispatch agent=${agent:-} args=$*"; }
+  for fn in dispatch_state_dir dispatch_tmux worker_has_quota_error worker_next_agent worker_trigger_retry_or_fallback; do
+    source <(sed -n "/^$fn()/,/^}/p" "$REPO/bin/fleet")
+  done
+  worker_has_quota_error quota-worker mockquota || echo "NOT-DETECTED"
+  worker_trigger_retry_or_fallback quota-worker quota
+)" 2>&1 || bad "fallback subshell failed: $fb_out"
+case "$fb_out" in *NOT-DETECTED*) bad "quota error not detected" ;; *) ok "quota error detected via ledger" ;; esac
+has "fallback re-dispatches on the router's next pack" "dispatch agent=stub args=--model fallback quota-worker" "$fb_out"
+has "supervision.log records the fallback" "fallback from=mockquota to=stub:fallback reason=quota" "$(cat "$SDIR/supervision.log")"
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "PASS: all $pass tests passed"

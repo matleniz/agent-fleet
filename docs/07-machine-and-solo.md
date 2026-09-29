@@ -255,7 +255,12 @@ monitoring the fleet need an automated signal rather than hanging indefinitely.
 - **Retry and fallback policy:** configure `WORKER_MAX_RETRIES` (default `0` = off).
   When enabled, stalled workers or quota failures are automatically re-dispatched with
   a resumption preamble up to N times; after N failures, supervision falls back to the
-  next pack in `AGENTS`. Stalls, retries, and fallbacks are journaled in `dispatch/<project>/supervision.log`.
+  next pack: when routing is configured (`ROUTE_*`), the one `fleet-route.py` picks
+  (skipping packs in quota and the one that just failed, `--exclude`), otherwise the next
+  pack in `AGENTS`. A quota failure skips the retries and falls back at once. Quota is
+  detected only from the pack's own `pack_quota_pattern` (via the shared
+  `worker_has_quota_error`, also used by `_dispatch-run`) or an active
+  `$FLEET_ROOT/quota/<pack>` ledger entry, never from a generic 429/402 match. Stalls, retries, and fallbacks are journaled in `dispatch/<project>/supervision.log`.
   Operators can also manually trigger a resume or fallback with `fleet retry [--fallback] [--pack P] <name>`.
 - **Progress recovery:** any file modification or git commit in the worker worktree
   immediately resets the activity age and clears the stalled flag.
