@@ -1306,6 +1306,12 @@ dispatch_status_label() {  # <worker-name> [<worktree-path>] -> "[dispatch: runn
       ;;
   esac
   printf '[dispatch: %s] ' "$s"
+  # Advisory: finished rc=0 but left no commit and a clean tree (silent no-op).
+  if [ "$s" = "done rc=0" ] && [ -n "$path" ] &&
+     python3 "$SELF_DIR/fleet_common.py" wait-summary "$path" "$f" "" "${DEFAULT_BASE:-}" --json 2>/dev/null |
+       grep -q '"empty": true'; then
+    printf '[no changes] '
+  fi
 }
 
 # Provenance sidecar (WS3): record which coordinator spawned a worker and how.

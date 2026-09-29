@@ -350,6 +350,22 @@ def get_pr_url(path, sdir=None, name=None):
     return None
 
 
+# Fleet-written sidecars that never count as worker output (mirrors the core
+# patterns of bin/fleet's barrier_ignore_regex).
+_SIDECARS = {".dispatch-marker", ".model-marker", ".fleet-witness"}
+
+
+def has_real_changes(path):
+    """True when the worktree has uncommitted work beyond the barrier/sidecar files."""
+    ignore = barrier_files() | _SIDECARS
+    for line in _git_out(["git", "status", "--porcelain", "-uall"], path).splitlines():
+        if line.startswith("?? ") and line[3:].strip().strip('"') in ignore:
+            continue
+        if line.strip():
+            return True
+    return False
+
+
 def worker_wait_summary(path, status_file, meta_file=None, base=None):
     """Structured summary for a worker on exit or wait check."""
     status = ""
@@ -382,12 +398,21 @@ def worker_wait_summary(path, status_file, meta_file=None, base=None):
 
     ca = commits_ahead(path, base)
     pr = get_pr_url(path, sdir=sdir, name=name)
+    # Advisory: a clean exit that left nothing behind (no commit, clean tree) is
+    # a silent no-op, not a success — the agent stalled or refused the task.
+    empty = (
+        status == "done rc=0"
+        and ca == 0
+        and os.path.isdir(path or "")
+        and not has_real_changes(path)
+    )
     return {
         "worker": name,
         "status": status or "unknown",
         "duration_sec": duration,
         "commits": ca if ca is not None else 0,
         "pr": pr or "none",
+        "empty": empty,
     }
 
 
@@ -556,6 +581,7 @@ def main():
             )
             print(
                 f"worker={info['worker']} status=\"{info['status']}\" duration={dur} commits={info['commits']} pr={info['pr']}"
+                + (" [no changes]" if info["empty"] else "")
             )
         sys.exit(0)
 
