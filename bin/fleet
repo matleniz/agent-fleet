@@ -570,8 +570,21 @@ session_window() {  # <win> <fleet args...>
 
 # Attach the target machine's whole tmux session (all its windows), through a
 # private view so two attaches never drag each other's active window.
+# One-line usage reminder before the attach (tty only: tty_or_die has already
+# guaranteed one). With $TMUX set the view snippet does `switch-client` (this
+# client is moved to the view, nothing is nested), so the prefix is unchanged;
+# only the way back differs.
+attach_hint() {
+  [ -t 2 ] || return 0
+  echo "[fleet] Ctrl-b w: list windows | Ctrl-b n/p: next/previous | Ctrl-b d: detach" >&2
+  if [ -n "${TMUX:-}" ]; then
+    echo "[fleet] already inside tmux: this client is switched to the fleet view; Ctrl-b s lists sessions to go back." >&2
+  fi
+}
+
 session_attach() {
   tty_or_die || exit 2
+  attach_hint
   if [ "$M_LOCAL" = 1 ]; then
     command -v tmux >/dev/null || { echo "error: tmux not installed" >&2; exit 2; }
     tmux has-session -t "$M_TMUX" 2>/dev/null \
