@@ -264,7 +264,9 @@ monitoring the fleet need an automated signal rather than hanging indefinitely.
   are recorded in the worker's `.meta` (kept across auto-retry/fallback).
 - **Scope enforcement:** the scope is one more check of the gate's shared
   mechanism (`bin/fleet_checks.py`): the paths this branch changed (committed vs
-  `DEFAULT_BASE`, plus uncommitted/untracked) must match the allowlist. On worker
+  `DEFAULT_BASE`, plus uncommitted/untracked) must match the allowlist. Untracked files fleet itself
+  injected into the worktree (the union of every pack's `pack_barrier_files` plus
+  the dispatch sidecars) are ignored; a tracked file the worker modified is always checked. On worker
   exit, `_dispatch-run` prints violations as `WARN scope <file>:1 ...`
   (advisory: status stays `done rc=0`, a `scope-violation` event is logged);
   with `--checks scope:blocking` the worker is recorded as `done-out-of-scope`
