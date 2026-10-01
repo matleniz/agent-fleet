@@ -380,6 +380,7 @@ def project_tree(name, env, defaults, probe_remote=False):
             "linear_project_id": env.get("QUEUE_LINEAR_PROJECT_ID") or None,
             "linear_project_name": env.get("QUEUE_LINEAR_PROJECT_NAME") or None,
             "github_repo": env.get("QUEUE_GITHUB_REPO") or None,
+            "github_project": env.get("QUEUE_GITHUB_PROJECT") or None,
         },
         "machines": machines,
     }
@@ -388,7 +389,11 @@ def project_tree(name, env, defaults, probe_remote=False):
 def render_text(tree):
     lines = []
     for p in tree["projects"]:
-        lines.append("● %s  (queue: %s)" % (p["name"], p["queue"]["kind"]))
+        q = p["queue"]
+        qdesc = q["kind"]
+        if q["kind"] == "github" and q.get("github_repo"):
+            qdesc += " " + q["github_repo"] + (" board #" + q["github_project"] if q.get("github_project") else "")
+        lines.append("● %s  (queue: %s)" % (p["name"], qdesc))
         for m in p["machines"]:
             where = "local" if m.get("local") else (m.get("host") or "?")
             tag = "" if m.get("resolved") else " [unresolved]"

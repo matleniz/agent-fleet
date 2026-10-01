@@ -137,9 +137,9 @@ not a named cloud CLI.
 ## A starter set of routines
 
 - **Security audit** (cloud, weekly): clone repos → security skill → findings to
-  queue as `type:security`.
+  queue as `type:bug` (plus an `area:*`; `priority:p1-urgent` when exploitable).
 - **Refactor audit** (cloud, weekly): static tools (linters, dead-code,
-  complexity, duplication) → synthesized proposals as `type:refacto`.
+  complexity, duplication) → synthesized proposals as `type:improvement`.
 - **Feature scan** (cloud, monthly): repo direction vs the state of the art found
   by web research, sources mandatory → `type:feature`.
 - **Conversation-feedback** (local, weekly for distill; more frequent for

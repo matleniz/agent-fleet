@@ -27,10 +27,16 @@ Then propose, and wait for my approval before touching anything:
    fleet-assess, fleet-queue, fleet-migrate into ~/.local/bin).
 2. Register my project with ONE command:
      fleet-init <name> [--code <repo>] [--hub <hub>] [--agents claude,opencode]
-                --queue <linear|github|none>
-   --agents lists the agent packs to enable (first = default at launch). With
-   --queue linear|github, pass the tracker coordinates; with none, workers
-   surface findings to me directly. With a non-existent --hub, it seeds the hub
+                --queue <github|none|linear>
+   --agents lists the agent packs to enable (first = default at launch). The
+   default tracker is github: a PRIVATE issues repo per product
+   (--github-repo <owner>/<name>-issues) plus a GitHub Project board; after
+   fleet-init, `fleet --project <name> issue bootstrap --create --area NAME=DESC`
+   creates the repo if needed, its labels, board and conventions README, and
+   prints the QUEUE_GITHUB_PROJECT line to add (docs/03). Agents then move
+   issues with `fleet issue new|start|review|block|done`. linear is a legacy
+   backend (pass its team/project coordinates); with none, workers surface
+   findings to me directly. With a non-existent --hub, it seeds the hub
    (INDEX + AGENTS.md with a CLAUDE.md bridge + coordinator skills in
    .agents/skills/). OMIT --code to scaffold from scratch: a base-commit repo
    ~/<name> pushed to a new private GitHub repo, a seeded+committed hub

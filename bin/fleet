@@ -115,6 +115,11 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
                        --write-probe [--machine M] also does a real witness write
                        in auto mode to prove the box can actually write
   sync-remote [M]      ship this engine to the project's VM(s) (bundle+build)
+  issue new|start|review|block|done|bootstrap  the project's GitHub issue queue
+                       (QUEUE_KIND=github): file an issue with its labels + board
+                       column (+ sub-issue link), move it through the lifecycle
+                       (board Status + status:* label + comment, in one call), or
+                       bootstrap a queue repo (labels, board, README). fleet issue -h
   init <name> [--code PATH] [...] register a NEW project. With --code: an
                        existing repo. WITHOUT --code: scaffold from scratch
                        (private GitHub repo + hub + github queue). fleet init -h
@@ -146,7 +151,7 @@ if [ -z "$sub" ]; then
       case "${1:-}" in -h|--help|"") exec "$SELF_DIR/fleet-init" ;; esac
       exec "$SELF_DIR/fleet-init" "$@" ;;
     ""|hub) sub="hub"; [ $# -gt 0 ] && shift ;;
-    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|judge|race|fanin|chats|doctor|sync-remote|dispatch|attach|wait|retry|global|machines|status|context|feedback|peek|send|route|_dispatch-run)
+    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|judge|race|fanin|chats|doctor|sync-remote|dispatch|attach|wait|retry|global|machines|status|context|feedback|issue|peek|send|route|_dispatch-run)
       sub="$1"; [ "$sub" = worker ] && sub=w; [ "$sub" = remote ] && sub=r; shift ;;
     -*) echo "error: unknown option '$1'" >&2; exit 2 ;;
     *)
@@ -2175,6 +2180,17 @@ cmd_feedback() {  # fleet feedback <config|seen|record|list|prune> — conversat
   exec python3 "$SELF_DIR/fleet-feedback.py" "$@"
 }
 
+cmd_issue() {  # fleet issue new|start|review|block|done|bootstrap — the GitHub issue queue
+  # The queue keys live in the resolved project .env (sourced, not exported):
+  # hand them to the helper explicitly.
+  exec env QUEUE_KIND="${QUEUE_KIND:-none}" QUEUE_GITHUB_REPO="${QUEUE_GITHUB_REPO:-}" \
+    QUEUE_GITHUB_PROJECT="${QUEUE_GITHUB_PROJECT:-}" \
+    QUEUE_GITHUB_PROJECT_OWNER="${QUEUE_GITHUB_PROJECT_OWNER:-}" \
+    QUEUE_NEEDS_LABEL="${QUEUE_NEEDS_LABEL:-}" \
+    FLEET_ISSUE_PROJECT="$PROJ_NAME" WT_HOME="${WT_HOME:-}" HUB="${HUB:-}" \
+    python3 "$SELF_DIR/fleet-issue.py" "$@"
+}
+
 cmd_route() {  # fleet route [--difficulty D] [--kind K] [--escalate] [--task T]
   exec python3 "$SELF_DIR/fleet-route.py" "$@"
 }
@@ -2208,6 +2224,7 @@ case "$sub" in
   status)      cmd_status "$@" ;;
   context)     cmd_context "$@" ;;
   feedback)    cmd_feedback "$@" ;;
+  issue)       cmd_issue "$@" ;;
   peek)        cmd_peek "$@" ;;
   send)        cmd_send "$@" ;;
   route)       cmd_route "$@" ;;

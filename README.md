@@ -91,17 +91,21 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
 3. Register a project in one command (writes the config, optionally seeds a hub):
    ```bash
    fleet-init myproj --code ~/my-code-repo --queue none        # solo / no tracker
-   # or with a hub, two agent packs and a Linear queue:
+   # or with a hub, two agent packs and a private GitHub issues queue
+   # (then bootstrap its labels + board + README, docs/03):
    fleet-init myproj --code ~/my-code-repo --hub ~/my-hub --agents claude,gemini \
-     --queue linear --linear-team TEAM --linear-project-id <uuid> \
-     --linear-project-name "Agent Queue"
+     --queue github --github-repo <you>/myproj-issues
+   fleet --project myproj issue bootstrap --create --area "api=the API"
    # or FROM SCRATCH (no --code): scaffold everything and start working fast —
    # a base-commit repo ~/myproj pushed to a new PRIVATE github.com/<you>/myproj,
    # a seeded+committed hub ~/myproj-hub pushed to <you>/myproj-hub, queue
    # defaulting to github. Needs gh.
    fleet-init myproj
    ```
-   `--queue` is `linear` | `github` | `none`. `--agents` lists the enabled agent
+   `--queue` is `github` | `none` | `linear` (legacy). The github queue is a
+   private `<owner>/<product>-issues` repo + a GitHub Project board; agents move
+   issues with `fleet issue new|start|review|block|done` (board column + `status:*`
+   label + comment in one call, see [docs/03](docs/03-queue.md)). `--agents` lists the enabled agent
    packs (default `claude`; first = the default at launch). Workers branch off an
    auto-detected base ref (`--base` overrides). `--ntfy TOPIC` wires attention
    notifications (agent waiting / turn done) to [ntfy.sh](https://ntfy.sh) via
@@ -183,6 +187,9 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           #   failures print; no-op if the project declares none
    fleet gate --review    # + one advisory fresh-model review of the diff after the checks
                           #   pass (or GATE_REVIEW=1; `fleet judge` alone); never blocks
+   fleet issue start 12   # GitHub queue (QUEUE_KIND=github): board "In progress" +
+                          #   status:in-progress + "Started by <worker>"; also
+                          #   new / review / block / done / bootstrap (docs/03)
    fleet race run --packs "a b" r1 "<task>"   # same task in N worktrees; then
                           #   `fleet race judge r1`, `fleet race comment r1 r1-b f.md`,
                           #   `fleet race steer r1 --all` re-dispatches review comments
@@ -293,6 +300,7 @@ agent-fleet/
 │   ├── new-worker            low-level: worktree + per-pack read-only-hub barrier
 │   ├── fleet-config.sh       project resolver + pack loader (sourced by the above)
 │   ├── fleet-queue           print the active project's queue config (skills read it)
+│   ├── fleet-issue.py        the GitHub issue queue: file / move / bootstrap (fleet issue)
 │   ├── hub-readonly-guard.py the barrier hook (shared: claude PreToolUse, gemini BeforeTool)
 │   ├── fleet-notify          ntfy.sh notifier wired into worker hooks (NTFY_TOPIC in the .env)
 │   ├── fleet-migrate         explicit one-shot migration from the legacy claude-fleet config
@@ -316,10 +324,11 @@ agent-fleet/
 │   ├── default.env           cross-project defaults (default.env: MACHINES_DEFAULT, resource limits)
 │   ├── machine.env           machine registry entry (machines/<name>.env)
 │   ├── global-AGENTS.md      per-user instructions seed, installed by `fleet global`
+│   ├── queue-README.md       conventions README of a GitHub issues queue repo (fleet issue bootstrap)
 │   ├── hub-INDEX.md          index router skeleton
 │   ├── hub-AGENTS.md         hub project instructions skeleton
 │   ├── worker-settings.local.json   the claude barrier settings (reference)
-│   └── skills/               conversation-compress, conversation-feedback, dispatch-work, doc-nav, process-agent-queue, propose-doc-change, resolve-finding
+│   └── skills/               conversation-compress, conversation-feedback, dispatch-work, doc-nav, fleet-evolve-scan, process-agent-queue, propose-doc-change, resolve-finding
 ├── test/
 │   ├── make-sandbox.sh       throwaway sandbox project to exercise the tools
 │   ├── make-pack-interop.sh  non-Claude cross-pack dogfood project (agy↔cursor)
