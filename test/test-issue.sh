@@ -146,6 +146,9 @@ run start 1
 [ "$rc" = 2 ] && ok "QUEUE_KIND=linear refused" || bad "linear rc=$rc"
 case "$out" in *"QUEUE_KIND=linear"*) ok "refusal names the kind";; *) bad "refusal: $out";; esac
 
+rc=0; out="$(cd "$TMP" && env -u FLEET_CONF -u FLEET_PROJECT "$FLEET" issue -h 2>&1)" || rc=$?
+case "$rc:$out" in 0:*"new,start,review,block,done,bootstrap"*) ok "issue -h needs no project";; *) bad "issue -h rc=$rc: $out";; esac
+
 echo "== bootstrap"
 conf github ""
 run bootstrap --area "cli=bin/" --area "area:docs=docs/"

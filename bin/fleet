@@ -150,8 +150,11 @@ if [ -z "$sub" ]; then
       shift
       case "${1:-}" in -h|--help|"") exec "$SELF_DIR/fleet-init" ;; esac
       exec "$SELF_DIR/fleet-init" "$@" ;;
+    issue)  # help needs no resolved project (the rest does: the queue keys live in it)
+      case "${2:-}" in ""|-h|--help) exec python3 "$SELF_DIR/fleet-issue.py" -h ;; esac
+      sub="issue"; shift ;;
     ""|hub) sub="hub"; [ $# -gt 0 ] && shift ;;
-    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|judge|race|fanin|chats|doctor|sync-remote|dispatch|attach|wait|retry|global|machines|status|context|feedback|issue|peek|send|route|_dispatch-run)
+    w|worker|r|remote|ls|del|prune|refresh|add-agent|agents|gate|judge|race|fanin|chats|doctor|sync-remote|dispatch|attach|wait|retry|global|machines|status|context|feedback|peek|send|route|_dispatch-run)
       sub="$1"; [ "$sub" = worker ] && sub=w; [ "$sub" = remote ] && sub=r; shift ;;
     -*) echo "error: unknown option '$1'" >&2; exit 2 ;;
     *)

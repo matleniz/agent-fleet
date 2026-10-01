@@ -435,7 +435,7 @@ def main(argv):
     for action, what in (("start", "In progress + status:in-progress + 'Started by <name>'"),
                          ("review", "In review + status:in-review (PR open)"),
                          ("block", "Blocked + status:blocked + the blocker (--note required)"),
-                         ("done", "Done, status labels cleared; closes an open issue (--note required)")):
+                         ("done", "Done, status labels cleared; an open issue is closed (--note why required)")):
         m = sp.add_parser(action, help=what)
         m.add_argument("number", type=int)
         m.add_argument("--note", default="")
