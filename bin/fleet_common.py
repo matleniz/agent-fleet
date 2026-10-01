@@ -352,12 +352,12 @@ def get_pr_url(path, sdir=None, name=None):
 
 # Fleet-written sidecars that never count as worker output (mirrors the core
 # patterns of bin/fleet's barrier_ignore_regex).
-_SIDECARS = {".dispatch-marker", ".model-marker", ".fleet-witness"}
+SIDECARS = {".dispatch-marker", ".model-marker", ".fleet-witness"}
 
 
 def has_real_changes(path):
     """True when the worktree has uncommitted work beyond the barrier/sidecar files."""
-    ignore = barrier_files() | _SIDECARS
+    ignore = barrier_files() | SIDECARS
     for line in _git_out(["git", "status", "--porcelain", "-uall"], path).splitlines():
         if line.startswith("?? ") and line[3:].strip().strip('"') in ignore:
             continue

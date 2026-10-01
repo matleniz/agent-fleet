@@ -27,6 +27,8 @@ import re
 import subprocess
 import sys
 
+import fleet_common
+
 CHECK_NAMES = (
     "no-tracker-ids",
     "docs-with-bin",
@@ -65,6 +67,7 @@ def changed_files(root, base):
     if not base or _git(root, "rev-parse", "--verify", "--quiet", base) is None:
         return None
     names = set()
+    injected = fleet_common.barrier_files() | fleet_common.SIDECARS
     for args in (
         ("diff", "--name-only", f"{base}...HEAD"),
         ("diff", "--name-only", "HEAD"),
@@ -73,7 +76,13 @@ def changed_files(root, base):
         out = _git(root, *args)
         if out is None and args[0] == "diff" and "..." in args[-1]:
             out = _git(root, "diff", "--name-only", base, "HEAD")
-        names.update((out or "").splitlines())
+        lines = (out or "").splitlines()
+        if args[0] == "ls-files":
+            # Fleet-injected untracked files (pack barrier/setup configs, dispatch
+            # sidecars) are not worker output. A tracked file the worker modified
+            # (or a committed one) still comes from the diffs above.
+            lines = [n for n in lines if n not in injected]
+        names.update(lines)
     return sorted(n for n in names if n)
 
 
