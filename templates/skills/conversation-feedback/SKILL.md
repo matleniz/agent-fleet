@@ -95,29 +95,37 @@ is one entry tracking both.
 ## 4a. File each new `project` lesson to the queue
 
 One lesson = one issue, filed against the project it came from. Resolve the backend
-with `fleet-queue` (as `propose-doc-change` does) and follow that skill's transport
-details (Linear MCP / GraphQL, `gh issue create`, or `none` → surface to the user).
-Labels: **`type:doc-proposal`** for a concrete edit to a trusted doc / skill /
-`AGENTS.md`; **`type:workflow`** for a how-we-work item with no single target file.
-Plus the umbrella `agent` label. Never create labels; leave state at the default;
-never close your own issue. Tracker language per your global context.
+with `fleet-queue` (as `propose-doc-change` does):
 
-Body (routine-shaped — you have no branch/worktree, unlike `propose-doc-change`):
+- **github** (the default) → `fleet --project <p> issue new --type <t> --priority
+  p3 "<title>" body.md` (labels + board Backlog in one call; `agent` is added).
+- **none** → surface the lesson to the user.
+- **linear** (legacy) → `propose-doc-change`'s Linear transport (MCP / GraphQL).
+
+Type: **`doc-proposal`** for a concrete edit to a trusted doc / skill /
+`AGENTS.md`; **`workflow`** for a how-we-work item with no single target file.
+Plus the umbrella `agent` label. Never create labels; leave state at the default
+(Backlog); never close your own issue. Tracker language per your global context
+(English by default).
+
+Body (routine-shaped — you have no branch/worktree, unlike `propose-doc-change`),
+in the queue's four standard sections:
 
 ```
-## Source
-conversation-feedback routine, run <YYYY-MM-DD>, project <name>
+## Context
+conversation-feedback routine, run <YYYY-MM-DD>, project <name>. Evidence: how
+often / where (e.g. "3 sessions, 2 projects"); cite a transcript path from a
+note or a quoted correction. Never paste a whole transcript.
 
-## Pattern
+## Problem / Goal
 <the recurring mistake, one or two lines>
 
-## Evidence
-<how often / where: e.g. "3 sessions, 2 projects"; cite a transcript path from a
- note or a quoted correction. Never paste a whole transcript.>
-
-## Proposed method change
+## Do
 <the durable instruction that should exist, and WHERE it belongs: which
  AGENTS.md / skill / global file. Concrete enough for the coordinator to apply.>
+
+## Acceptance
+<how to tell the lesson stuck: e.g. the pattern stops appearing in the notes>
 ```
 
 ## 4b. Write the global digest

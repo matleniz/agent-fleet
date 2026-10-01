@@ -24,7 +24,20 @@ coordinator integrates it.
 
 Run `fleet-queue` to get this project's queue backend and coordinates, then:
 
-- **QUEUE_KIND=linear** → create ONE Linear issue in team `QUEUE_LINEAR_TEAM`,
+- **QUEUE_KIND=github** (the default) → ONE issue in the private issues repo
+  `QUEUE_GITHUB_REPO`, through `fleet issue` (it applies the labels and puts the
+  issue on the board's Backlog; never hand-roll `gh project` calls):
+  ```bash
+  fleet issue new --type doc-proposal --priority p3 [--area <area>] \
+    "[<worktree-name>] <short description>" body.md     # or - for stdin
+  ```
+  That yields `type:doc-proposal` + `priority:p3-medium` + `agent` (add `--area`
+  when the repo has a fitting `area:*` label, see its README). Leave the state at
+  Backlog; never close it.
+- **QUEUE_KIND=none** → this project has NO queue. Do not try to file. Surface the
+  drift to the user directly: the hub file/section, the code file:line that proves
+  it, and the proposed change. Let them decide. Do not block your task.
+- **QUEUE_KIND=linear** (legacy) → create ONE Linear issue in team `QUEUE_LINEAR_TEAM`,
   project `QUEUE_LINEAR_PROJECT_ID`. Add label `agent` and `type:doc-proposal` if
   they exist (do not create labels here). State: leave the default
   (Backlog/Triage), never Done. Two transports, pick what your session has:
@@ -33,41 +46,37 @@ Run `fleet-queue` to get this project's queue backend and coordinates, then:
   - otherwise the Linear GraphQL API with `$LINEAR_API_KEY`:
     `curl -s https://api.linear.app/graphql -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d '{"query": "mutation { issueCreate(input: {teamId: \"...\", projectId: \"...\", title: \"...\", description: \"...\"}) { issue { identifier } } }"}'`
     (resolve the team UUID first via a `teams` query if you only have the key).
-  If neither is available, fall back to the `none` behavior below and say so.
-- **QUEUE_KIND=github** → `gh issue create` in `QUEUE_GITHUB_REPO` with labels
-  `agent`, `type:doc-proposal`.
-- **QUEUE_KIND=none** → this project has NO queue. Do not try to file. Surface the
-  drift to the user directly: the hub file/section, the code file:line that proves
-  it, and the proposed change. Let them decide. Do not block your task.
+  If neither is available, fall back to the `none` behavior above and say so.
 
 ## Proposal content (all backends)
 
 Title: `[<worktree-name>] <short description>`
 
-Body (markdown), always these sections:
+Body (markdown), always these sections (the queue's standard four):
 
 ```
-## Branch
-<the branch you are on>
+## Context
+Branch <the branch you are on>. Why: one or two lines of rationale, with the
+code file:line that proves the drift if it is a drift fix.
 
-## Target file(s)
-<path(s) in the hub you want changed>
+## Problem / Goal
+Target file(s): <path(s) in the hub you want changed> (+ section). What is
+wrong or missing there.
 
-## Proposed change
-<what to change, concretely>
+## Do
+<what to change, concretely. Suggested content: the exact text/snippet or diff
+ when you can — the more precise, the faster the coordinator integrates
+ without guessing.>
 
-## Why
-<one or two lines of rationale, with the code file:line if it is a drift fix>
-
-## Suggested content
-<optional: the exact text/snippet or diff. The more precise, the faster the
- coordinator integrates without guessing.>
+## Acceptance
+<what the doc says afterwards / how the coordinator checks it>
 ```
 
 ## Rules
 
-- **Tracker language.** Title, body, and any comment go to the tracker in its
-  fixed language from your global context file, regardless of the conversation
+- **Tracker language.** Title, body, labels and any comment go to the tracker in
+  its fixed language from your global context file (English by default),
+  regardless of the conversation
   language — even when the hub doc you propose to change is in another language.
   Quote the target doc verbatim where needed; the proposal's own prose stays in
   the tracker language.

@@ -13,22 +13,28 @@ it is read-only for you).
 
 Run `fleet-queue` for this project's queue backend:
 
-- **linear** → read the issue from the Linear project (`QUEUE_LINEAR_TEAM` /
+- **github** (the default) → `gh issue view <n> -R <QUEUE_GITHUB_REPO> --comments`.
+  Move it with `fleet issue` (board column + `status:*` label + comment in one
+  call; never hand-roll `gh project` calls).
+- **none** → there is no queue; the finding is given directly by the user.
+- **linear** (legacy) → read the issue from the Linear project (`QUEUE_LINEAR_TEAM` /
   `QUEUE_LINEAR_PROJECT_ID`) — via a Linear MCP if connected (caution: some wrap
   the payload in a nested text field needing a second `json.loads()`), otherwise
   via the Linear GraphQL API with `$LINEAR_API_KEY` (`issue` / `issues` query).
-- **github** → `gh issue view <n>` in `QUEUE_GITHUB_REPO`.
-- **none** → there is no queue; the finding is given directly by the user.
+  Set its states with the tracker's own tools (no `fleet issue`).
 
 ## Steps
 
 1. **Read the finding.** Pull: severity, location (file:line), impact, proposed
    fix, owner. If it is owned by someone else or lives in another repo (e.g. an
-   IaC repo), **STOP** — it is not a code fix here. Tell the user.
+   IaC repo), **STOP** — it is not a code fix here. Tell the user. Otherwise claim
+   it: github → `fleet issue start <n>` (In progress + `status:in-progress` +
+   `Started by <your worktree>`).
 2. **Verify against the code first.** Open the cited files and confirm the finding
    is real and still current (the code may have changed since it was filed). If it
    is a false positive or already fixed, do NOT force a change — say so, and
-   comment the issue (if there is a queue) with that conclusion.
+   comment the issue (if there is a queue) with that conclusion. Stuck on
+   something outside your reach → `fleet issue block <n> --note "<blocker>"`.
 3. **Branch.** Work on your worktree's branch (created by `new-worker`). Do not
    touch unrelated code.
 4. **Fix**, following the repo's conventions (its context file — `AGENTS.md` or
@@ -46,18 +52,23 @@ Run `fleet-queue` for this project's queue backend:
    `type:doc-proposal` via `propose-doc-change` (it routes by QUEUE_KIND; for
    `none` it surfaces the drift to the user). Never edit the hub. A code-internal
    change the hub does not describe needs none.
-7. **Commit + PR.** Message references the finding, e.g.
-   `fix(security): block path traversal in the upload handler (#123)`. Push, open a PR.
-8. **Update the finding** (if there is a queue): comment the PR link + a short
-   summary; move it to In Progress / In Review. Do **not** close it yourself —
-   leave the final close to review/merge.
+7. **Commit + PR.** Message describes the fix, e.g.
+   `fix(security): block path traversal in the upload handler`. Push, open a PR
+   whose body ends with `Closes <QUEUE_GITHUB_REPO>#<n>` (e.g. `Closes
+   owner/product-issues#123`; the full `owner/repo#n` form is what closes an issue
+   living in another repo than the code). The merge then closes the issue.
+8. **Update the finding** (if there is a queue): github → `fleet issue review <n>
+   --note "PR <url>: <one-line summary>"` (In review + `status:in-review`);
+   linear (legacy) → comment the PR link + summary, move it to In Review. Do
+   **not** close it yourself — leave the final close to review/merge.
 
 ## Rules
 
-- **Tracker language.** Anything you write to the tracker (the issue comment, any
-  edited title/description) is in the tracker's fixed language from your global
-  context file, regardless of the conversation language. (Commit/PR/code language
-  is the code repo's, per its context file — a separate rule.)
+- **Tracker language.** Anything you write to the tracker or the code host (issue
+  comments, PR title/body, any edited title/description) is in the tracker's fixed
+  language from your global context file (English by default), regardless of the
+  conversation language. (Code/doc language inside the repo follows its context
+  file — a separate rule.)
 - One finding = one branch = one PR.
 - Never fix a finding you could not verify in the code.
 - Security: prefer a testable defense; ship the regression test with it.

@@ -29,30 +29,48 @@ Partition by the FILES each stream writes, not by the steps of the pipeline.
 ## Steps
 
 1. **Find the queue.** Run `fleet-queue` for this project's backend and coordinates:
-   - `QUEUE_KIND=github` → issues in `QUEUE_GITHUB_REPO` (`gh issue ...`).
-   - `QUEUE_KIND=linear` → the configured Linear team/project.
+   - `QUEUE_KIND=github` (the default) → the private issues repo
+     `QUEUE_GITHUB_REPO` + its board; file and move issues with `fleet issue`
+     (never hand-roll `gh project` calls). Conventions: the issues repo's README.
    - `QUEUE_KIND=none` → no tracker; track the streams yourself and brief workers
      directly. Everything below still applies except the issue-filing.
+   - `QUEUE_KIND=linear` (legacy) → the configured Linear team/project, through
+     its MCP/API (no `fleet issue`).
 
    Do this first, every time. The queue is wherever `fleet-queue` says, not where
-   you assume (it is not Linear just because some other project uses Linear).
+   you assume (it is not the tracker some other project uses).
 
 2. **Partition by file ownership.** Express the work as a set of streams where no
    two write the same file. If two must touch the same file, they are NOT
    independent: either fold them into one stream, or make one depend on the other
    (sequence, do not parallelize). State each stream's file scope explicitly.
 
-3. **File one issue per stream** in the queue. Each issue states: the scope (which
-   files/module), what "done" means, and any dependency on another stream's issue.
-   Label with the project's `type:` convention. Tracker language per your global
-   context file.
+3. **File one issue per stream** in the queue. Each issue states, in the four
+   standard sections (`## Context` / `## Problem / Goal` / `## Do` /
+   `## Acceptance`): the scope (which files/module), what "done" means (commands
+   + expected result), and any dependency on another stream's issue. A batch of
+   streams is an **epic**: file the parent first, then each stream as its
+   sub-issue. On github:
+   ```bash
+   fleet issue new --type epic --priority p2 "<the whole piece of work>" epic.md
+   fleet issue new --type feature --priority p2 --area <area> --parent <epic-n> \
+     "<stream title>" stream.md        # repeat per stream; prints the issue URL
+   ```
+   (`--type bug|feature|improvement|chore|...`, `--priority p1..p4`; `agent` is
+   added for you; `--needs-human` + a `### Decision needed` section when the human
+   must choose first.) Tracker language per your global context file (English by
+   default).
 
 4. **Dispatch one worker per independent stream.** A worker that is itself an agent
    is dispatched headless:
    `fleet dispatch <name> "run resolve-finding on issue <id>"`
    (use `fleet w <name>` instead if you are a human driving interactively). One
    stream = one worker = one branch = one PR. Add `--machine <vm>` to run the
-   worker on a VM (delegated to its container) or `--model <m>` to pick its model.
+   worker on a VM (delegated to its container) or `--model <m>` to pick its model,
+   and `--scope '<globs>' --checks scope:blocking` to pin the stream's file
+   ownership. The worker claims the issue (`fleet issue start <n>`), and its PR
+   body carries `Closes <QUEUE_GITHUB_REPO>#<n>` so the merge closes it; tell it
+   so in the brief if it does not run `resolve-finding`.
    Streams with a dependency wait: dispatch the upstream first, dispatch the
    downstream only once the upstream PR has merged.
 
@@ -60,7 +78,7 @@ Partition by the FILES each stream writes, not by the steps of the pipeline.
    base and flags a finished worker that produced none (`[empty: finished, no
    commits]`); rc=0 is process-exited, not a delivered result. `fleet wait
    [<name>]` blocks until workers finish. Follow each PR and its checks through the
-   queue.
+   queue (the board shows In progress / In review / Blocked at a glance).
 
 6. **Sequence the merges.** Independent PRs merge in any order. A dependency chain
    merges upstream-first; the downstream worker rebases on the merged base and
