@@ -26,6 +26,9 @@ names). Overview: `README.md`. Mental model: `docs/01-mental-model.md`.
   global-instructions file for `fleet global`; packs whose CLI has no global
   mechanism omit it), optional `PACK_MODEL_FLAG` (the CLI flag that carries the per-launch model of
   `pack_launch_headless <prompt> <model>`; unset = model ignored, dispatch warns),
+  optional `pack_model_supported <model>` (return non-zero with the reason on stderr
+  when the pack cannot run that model headless; `fleet dispatch` calls it BEFORE
+  creating any worktree/state and exits 2 — claude refuses haiku),
   and optional `pack_mcp_profile <dest> <allowlist>` (apply
   the project's `WORKER_MCP` lean-MCP allowlist to a worktree; packs whose CLI
   can't scope MCP per project omit it), and optional `pack_chat_history <hub>

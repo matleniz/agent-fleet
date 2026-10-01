@@ -74,7 +74,10 @@ pack_launch() {
 # shell call is denied while the run still exits rc=0 — a false success. Refuse
 # up front (non-zero, reason on stderr → the dispatch pane / `fleet peek`)
 # instead. A missing/empty model (account default) and every other model pass.
-_claude_require_auto_capable() {  # <model or "">
+# This is the pack's optional `pack_model_supported <model>` hook: `fleet
+# dispatch` calls it BEFORE creating a worktree (so a refused model leaves no
+# state behind) and pack_launch_headless reuses it, so the rule lives here only.
+pack_model_supported() {  # <model or "">
   case "$1" in
     *[Hh]aiku*)
       echo "error: claude model '$1' cannot run headless under --permission-mode auto (auto mode is unavailable on Haiku; the worker would stall on a permission prompt nobody can answer). Use sonnet or opus for dispatched workers." >&2
@@ -92,7 +95,7 @@ _claude_require_auto_capable() {  # <model or "">
 # shellcheck disable=SC2034  # read by fleet_model_args / fleet_pack_honors_model (bin/fleet-config.sh)
 PACK_MODEL_FLAG=--model
 pack_launch_headless() {
-  _claude_require_auto_capable "${2:-}" || exit 2
+  pack_model_supported "${2:-}" || exit 2
   pack_claude_subagent_model
   fleet_node_heap_guard
   _claude_mcp_flags

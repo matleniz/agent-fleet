@@ -60,6 +60,7 @@ jobs:
                    test/test-coordinator-wakeup.sh \
                    test/test-supervision-watchdog.sh test/test-supervision-group.sh \
                    test/test-server-detect.sh \
+                   test/test-dispatch-model-routing.sh \
                    test/test-antigravity-doctor.sh test/test-copilot-doctor.sh \
                    test/test-resolve-conf.sh test/test-tty-guard.sh \
                    test/barrier-guard.sh test/barrier-cursor.sh \

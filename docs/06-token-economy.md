@@ -165,6 +165,20 @@ model, and `fleet dispatch` / `fleet_pass` then warn on stderr (and in
 | copilot | yes | `--model` (`auto` = Copilot picks) | — |
 | antigravity | yes | `--model` | `agy models` |
 
+Two dispatch-time rules sit on top (`cmd_dispatch`, before any worktree exists):
+
+- **Model routes the pack.** A Claude model (`opus` / `sonnet` / `haiku` / `claude-*`,
+  case-insensitive) without `-a` (and no `--auto` route) goes to the `claude` pack, not
+  the project's default pack; if `claude` is not in `AGENTS`, dispatch fails with a
+  clear message. An explicit `-a` always wins (`-a opencode --model sonnet` stays opencode).
+- **`pack_model_supported <model>`** (optional pack hook): non-zero + reason on stderr
+  refuses the dispatch (exit 2) before `new-worker`, so nothing is left behind. The claude
+  pack uses it for haiku (no auto mode, so a headless run would stall); the same function
+  guards its `pack_launch_headless`.
+
+A launch that fails fast (quota, auth) keeps its last output lines in
+`dispatch/<project>/<name>.fail`; `fleet wait` shows them as `reason="..."`.
+
 `test/test-pack-model.sh` pins the argv per pack with fake binaries. A pass skips the
 admission guard (it is short-lived and read-only) and ignores the dispatch depth
 limit (it dispatches nothing).
