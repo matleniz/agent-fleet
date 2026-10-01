@@ -38,8 +38,15 @@ dispatch` calls (or a script whose every line is a `fleet` command).
 
 From this hub:
 - `fleet-queue` — this project's work queue (backend + coordinates). Run it FIRST
-  to see where issues go; it is whatever `fleet-queue` reports (Linear, GitHub
-  Issues, or none), not what another project uses.
+  to see where issues go; it is whatever `fleet-queue` reports (a private GitHub
+  issues repo + board, Linear as a legacy backend, or none), not what another
+  project uses. Conventions (labels, lifecycle, who does what) are the README of
+  the issues repo.
+- `fleet issue new|start|review|block|done` — the GitHub queue (QUEUE_KIND=github):
+  file an issue with its labels, file a work item under an epic (`--parent N`),
+  and move issues through the lifecycle (board Status + `status:*` label +
+  comment in one call). Never hand-roll `gh project` GraphQL. A worker's PR body
+  carries `Closes <QUEUE_GITHUB_REPO>#<n>`; the merge closes the issue.
 - `fleet w <name>` — spawn/reopen a worker worktree (one coherent task = one
   worker; batch small tasks that share a context into one warm worker).
 - `fleet dispatch <name> "<task>"` — headless worker (worktree + detached run)

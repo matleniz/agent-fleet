@@ -58,6 +58,7 @@ jobs:
                    test/test-orphan-windows.sh test/test-stale-done-windows.sh \
                    test/test-worker-stall.sh test/test-worker-lifecycle-health.sh \
                    test/test-coordinator-wakeup.sh \
+                   test/test-issue.sh \
                    test/test-supervision-watchdog.sh test/test-supervision-group.sh \
                    test/test-server-detect.sh \
                    test/test-dispatch-model-routing.sh \

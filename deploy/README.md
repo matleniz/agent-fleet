@@ -73,8 +73,9 @@ ALPHA_CODE_REPO_URL=https://github.com/org/alpha.git
 BETA_CODE_REPO_URL=https://github.com/org/beta.git
 BETA_HUB_REPO_URL=https://github.com/org/beta-hub.git
 BETA_AGENTS="claude"
-BETA_QUEUE_KIND=linear
-BETA_QUEUE_LINEAR_TEAM=BETA
+BETA_QUEUE_KIND=github
+BETA_QUEUE_GITHUB_REPO=org/beta-issues
+BETA_QUEUE_GITHUB_PROJECT=3
 # un-namespaced AGENTS / QUEUE_KIND / NTFY_TOPIC act as defaults per project
 ```
 
@@ -83,7 +84,7 @@ BETA_QUEUE_LINEAR_TEAM=BETA
 # rebuilds — it is recorded on the volume and re-read on every full run).
 docker exec -it fleet fleet-vm-setup --add-project beta \
   --repo https://github.com/org/beta.git --hub https://github.com/org/beta-hub.git \
-  --agents claude --queue linear --linear-team BETA
+  --agents claude --queue github --github-repo org/beta-issues --github-project 3
 ```
 
 The container runs any number of projects (each resolved by cwd / `--project`);

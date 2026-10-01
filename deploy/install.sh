@@ -100,7 +100,7 @@ wire_skills() {
 # fleet-init --force re-writes the project .env.
 provision_project() {
   local p="$1" ns; ns="$(ns_of "$p")"
-  local code hub agents queue qteam qpid qpname qghrepo ntfy a
+  local code hub agents queue qteam qpid qpname qghrepo qghproj ntfy a
   code="$(val "${ns}_CODE_REPO_URL")"
   hub="$(val "${ns}_HUB_REPO_URL")"
   agents="$(val "${ns}_AGENTS")";    agents="${agents:-${AGENTS:-claude}}"
@@ -109,6 +109,7 @@ provision_project() {
   qpid="$(val "${ns}_QUEUE_LINEAR_PROJECT_ID")"
   qpname="$(val "${ns}_QUEUE_LINEAR_PROJECT_NAME")"
   qghrepo="$(val "${ns}_QUEUE_GITHUB_REPO")"
+  qghproj="$(val "${ns}_QUEUE_GITHUB_PROJECT")"
   ntfy="$(val "${ns}_NTFY_TOPIC")";  ntfy="${ntfy:-${NTFY_TOPIC:-}}"
   [ -n "$code" ] || { echo "error: ${ns}_CODE_REPO_URL unset for project '$p' (set it in deploy/.env)" >&2; exit 2; }
   for a in $agents; do
@@ -138,6 +139,7 @@ provision_project() {
     ${qpid:+--linear-project-id "$qpid"} \
     ${qpname:+--linear-project-name "$qpname"} \
     ${qghrepo:+--github-repo "$qghrepo"} \
+    ${qghproj:+--github-project "$qghproj"} \
     ${ntfy:+--ntfy "$ntfy"} \
     --force
 }
@@ -162,12 +164,12 @@ if [ "${1:-}" = --add-project ]; then
   add_name="${1:-}"; shift || true
   { [ -n "$add_name" ] && [ "${add_name#--}" = "$add_name" ]; } || {
     echo "usage: fleet-vm-setup --add-project <name> --repo <url> [--hub <url>] [--agents a,b]" >&2
-    echo "                      [--queue linear|github|none] [--ntfy topic] [--linear-team T]" >&2
-    echo "                      [--linear-project-id ID] [--linear-project-name N] [--github-repo owner/repo]" >&2
+    echo "                      [--queue github|linear|none] [--ntfy topic] [--github-repo owner/repo]" >&2
+    echo "                      [--github-project N] [--linear-team T] [--linear-project-id ID] [--linear-project-name N]" >&2
     exit 2
   }
   add_repo="" add_hub="" add_agents="" add_queue="" add_ntfy=""
-  add_qteam="" add_qpid="" add_qpname="" add_qghrepo=""
+  add_qteam="" add_qpid="" add_qpname="" add_qghrepo="" add_qghproj=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --repo)                 add_repo="${2:-}"; shift 2 ;;
@@ -179,6 +181,7 @@ if [ "${1:-}" = --add-project ]; then
       --linear-project-id)    add_qpid="${2:-}"; shift 2 ;;
       --linear-project-name)  add_qpname="${2:-}"; shift 2 ;;
       --github-repo)          add_qghrepo="${2:-}"; shift 2 ;;
+      --github-project)       add_qghproj="${2:-}"; shift 2 ;;
       *) echo "error: unknown --add-project option '$1'" >&2; exit 2 ;;
     esac
   done
@@ -197,6 +200,7 @@ if [ "${1:-}" = --add-project ]; then
     [ -n "$add_qpid" ]    && echo "${ns}_QUEUE_LINEAR_PROJECT_ID=\"$add_qpid\""
     [ -n "$add_qpname" ]  && echo "${ns}_QUEUE_LINEAR_PROJECT_NAME=\"$add_qpname\""
     [ -n "$add_qghrepo" ] && echo "${ns}_QUEUE_GITHUB_REPO=\"$add_qghrepo\""
+    [ -n "$add_qghproj" ] && echo "${ns}_QUEUE_GITHUB_PROJECT=\"$add_qghproj\""
   } > "$EXTRA_DIR/$add_name.env"
   echo "[fleet-vm-setup] recorded '$add_name' -> $EXTRA_DIR/$add_name.env"
 
@@ -240,6 +244,7 @@ if [ -z "${ALL_PROJECTS// /}" ]; then
   [ -n "${QUEUE_LINEAR_PROJECT_ID:-}" ]   && printf -v "${ns}_QUEUE_LINEAR_PROJECT_ID" '%s' "$QUEUE_LINEAR_PROJECT_ID"
   [ -n "${QUEUE_LINEAR_PROJECT_NAME:-}" ] && printf -v "${ns}_QUEUE_LINEAR_PROJECT_NAME" '%s' "$QUEUE_LINEAR_PROJECT_NAME"
   [ -n "${QUEUE_GITHUB_REPO:-}" ]         && printf -v "${ns}_QUEUE_GITHUB_REPO" '%s' "$QUEUE_GITHUB_REPO"
+  [ -n "${QUEUE_GITHUB_PROJECT:-}" ]      && printf -v "${ns}_QUEUE_GITHUB_PROJECT" '%s' "$QUEUE_GITHUB_PROJECT"
   [ -n "${NTFY_TOPIC:-}" ]                && printf -v "${ns}_NTFY_TOPIC" '%s' "$NTFY_TOPIC"
 fi
 

@@ -41,9 +41,10 @@ Fill in and trim:
 
 ## How to work
 - Answers in <language>. Code, commits, docstrings in <language>.
-- Tracker/queue writes (Linear/GitHub issues, titles, descriptions, comments):
-  always in <tracker language, e.g. English>, regardless of the conversation
-  language. Repo docs follow that repo's own language (repo scale), not the tracker.
+- Tracker/queue writes (GitHub issues, PRs, titles, descriptions, comments,
+  labels — and any legacy tracker such as Linear): always in <tracker language,
+  e.g. English>, regardless of the conversation language. Move queue issues with
+  `fleet issue` (it keeps the board column and the `status:*` label in sync). Repo docs follow that repo's own language (repo scale), not the tracker.
 - Verify APIs / versions / flags against the code or docs before asserting. Do
   not guess.
 - Project context lives at the repo level (`<repo>/AGENTS.md`), not here.

@@ -1,6 +1,6 @@
 ---
 name: fleet-evolve-scan
-description: Weekly strategic scan for agent-fleet (docs/04 feature-scan style). Takes a step back, reads ROADMAP/BACKLOG/recent digests, researches the web for deep evolution ideas (orchestrators, multi-agent fleets, Claude Code / Cursor / OSS peers), then writes a dated evolve digest and optionally files a few high-value type:feature issues to the personal Linear queue. Report-only. Trigger on the weekly evolve schedule, or when asked for a deep / strategic / ecosystem scan of agent-fleet.
+description: Weekly strategic scan for agent-fleet (docs/04 feature-scan style). Takes a step back, reads ROADMAP/BACKLOG/recent digests, researches the web for deep evolution ideas (orchestrators, multi-agent fleets, Claude Code / Cursor / OSS peers), then writes a dated evolve digest and optionally files a few high-value type:feature issues to the agent-fleet queue (the project's GitHub issues repo, via fleet issue). Report-only. Trigger on the weekly evolve schedule, or when asked for a deep / strategic / ecosystem scan of agent-fleet.
 ---
 
 # Fleet evolve scan (weekly, judgment + web, report-only)
@@ -20,7 +20,7 @@ moves, patterns that would change architecture or the product surface.
 - **Report-only:** write a digest; optionally file queue issues. Never edit
   code, hubs, ROADMAP/BACKLOG in-repo, never `git push`, never touch prod.
 - **Sources mandatory** for every recommendation (URL + what you took from it).
-- **Tracker language:** English for any Linear title/body (personal workspace).
+- **Tracker language:** English for any issue title/body/comment/label.
 
 ## 0. Orient
 
@@ -35,8 +35,9 @@ Read (skim, do not dump):
    (recent entries), `$CODE_REPO/AGENTS.md` or `CLAUDE.md`
 2. Latest files under `$FLEET_HOME/feedback-digests/` and
    `$FLEET_HOME/evolve-digests/` (if any) — skip ideas already proposed
-3. Open Linear issues on project **Agent Fleet** (Linear MCP) with label
-   `type:feature` if present — do not duplicate
+3. Open queue issues with label `type:feature` — do not duplicate. github (the
+   default): `gh issue list -R <QUEUE_GITHUB_REPO> --state open --label
+   type:feature`; linear (legacy): the configured Linear project via its MCP
 
 Note what the product already claims (packs, queue backends, feedback pipeline,
 gates, remote machines) so you do not "rediscover" shipped work.
@@ -100,34 +101,32 @@ hardcode the year). Structure:
 
 ## 4. File sparingly to the queue
 
-Only if `QUEUE_KIND=linear` (or github) for agent-fleet:
+Only if agent-fleet has a queue (`QUEUE_KIND` from step 0 is not `none`):
 
 - File **at most 3** issues, only for top directions that are actionable and
   not already queued/BACKLOG-covered
-- Label intent: **`type:feature`** (+ umbrella `agent` if that label exists).
-  Never invent labels if create is restricted — put the type in the title
-  prefix instead: `[type:feature] …`
-- Body:
+- github (the default): `fleet --project agent-fleet issue new --type feature
+  --priority p3 [--area <area>] "<title>" body.md` — labels (`type:feature`,
+  `priority:*`, `agent`) and board Backlog in one call. linear (legacy): the
+  Linear MCP, label `type:feature` (+ `agent`); never invent labels there — put
+  the type in the title prefix instead: `[type:feature] …`
+- Body, in the queue's four standard sections:
 
 ```
-## Source
-fleet-evolve-scan routine, run <YYYY-MM-DD>
+## Context
+fleet-evolve-scan routine, run <YYYY-MM-DD>. Evidence: <urls + takeaways>
 
-## Direction
-<what + why now>
+## Problem / Goal
+<the direction: what + why now, and where it would land in agent-fleet>
 
-## Fit for agent-fleet
-<where it would land>
-
-## Evidence
-<urls + takeaways>
-
-## Suggested next step
+## Do
 <smallest validating experiment a worker could run — no implementation here>
+
+## Acceptance
+<what result of the experiment would justify building it>
 ```
 
-- Default state; do not close your own issues; English only on the tracker
-- Prefer Linear MCP when available; do not require `LINEAR_API_KEY`
+- Default state (Backlog); do not close your own issues; English only on the tracker
 
 Everything else stays **digest-only** (including vague or upstream-public ideas
 you are unsure about).

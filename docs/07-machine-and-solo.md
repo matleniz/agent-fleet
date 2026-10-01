@@ -341,9 +341,11 @@ One command:
 
 ```bash
 fleet-init newproj --code ~/newproj-repo --queue none
-# or, with a hub + a tracker:
-fleet-init newproj --code ~/newproj-repo --hub ~/newproj-hub --queue linear \
-  --linear-team TEAM --linear-project-id <uuid> --linear-project-name "Agent Queue"
+# or, with a hub + a private GitHub issues queue (docs/03):
+fleet-init newproj --code ~/newproj-repo --hub ~/newproj-hub --queue github \
+  --github-repo <owner>/newproj-issues
+fleet --project newproj issue bootstrap --create --area "api=the API"   # labels + board + README
+# (Linear is a legacy backend: --queue linear --linear-team T --linear-project-id ID ...)
 # or from scratch — no --code: scaffold ~/newproj (base commit, pushed to a new
 # private GitHub repo) + a committed ~/newproj-hub (pushed to a private
 # <owner>/newproj-hub), queue defaulting to github:
@@ -360,8 +362,11 @@ queue skills (`process-agent-queue`, `dispatch-work`) are **generic and
 config-driven**. They do not hardcode a tracker; they run `fleet-queue` to learn
 the active project's queue backend and coordinates, then act accordingly:
 
-- `QUEUE_KIND=linear` → file into the configured Linear team/project.
-- `QUEUE_KIND=github` → `gh issue create` in the configured repo.
+- `QUEUE_KIND=github` (first-class) → `fleet issue new` files into the configured
+  private issues repo and its board; `fleet issue start|review|block|done` moves it
+  through the lifecycle (board column + `status:*` label + comment, see
+  [03](03-queue.md)). PRs carry `Closes <QUEUE_GITHUB_REPO>#<n>`.
+- `QUEUE_KIND=linear` (legacy) → file into the configured Linear team/project.
 - `QUEUE_KIND=none` → there is no tracker; the worker surfaces the drift/finding
   to you directly. This is the solo / early-project case, and it just works.
 
@@ -373,8 +378,8 @@ touches the hub:
 - **Not hub-coupled → user level** (`~/.agents/skills/`, symlinked into
   `~/.claude/skills/` for Claude Code): the worker skills and `dispatch-work`. They
   work off `fleet-queue` + `fleet dispatch` alone, so they cover any project,
-  including a **hub-less** one (a code repo with a GitHub-Issues queue and no docs
-  hub). User level also means a teammate cloning the code repo does not inherit your
+  including a **hub-less** one (a code repo with a private GitHub issues queue
+  and no docs hub). User level also means a teammate cloning the code repo does not inherit your
   queue.
 - **Hub-coupled → seeded into each hub** by `fleet-init` from the templates:
   `doc-nav` (navigates the hub docs) and `process-agent-queue` (integrates doc

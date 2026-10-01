@@ -20,7 +20,7 @@
 #              [--remote HOST]           (legacy single VM; = a machine named "remote")
 #              [--queue linear|github|none]
 #              [--linear-team T --linear-project-id ID --linear-project-name NAME]
-#              [--github-repo owner/repo]
+#              [--github-repo owner/repo] [--github-project N]
 #              [--force]                 (overwrite an existing <name>.env)
 set -euo pipefail
 SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -56,10 +56,13 @@ usage: fleet-init <name> [--code PATH] [options]
                                 "local" is implicit. Writes MACHINES=
   --remote HOST                 legacy single VM (writes REMOTE_HOST; treated as
                                 a machine named "remote"). Prefer --machine
-  --queue linear|github|none    agent-queue backend (default: none; scaffold
+  --queue github|linear|none    agent-queue backend (default: none; scaffold
                                 mode defaults to github on the new repo)
-    --linear-team T --linear-project-id ID --linear-project-name NAME
-    --github-repo owner/repo
+    --github-repo owner/repo    (github: the issues repo, ideally a private
+                                <owner>/<name>-issues; scaffold default <owner>/<name>)
+    --github-project N          (github: the board = a GitHub Project number;
+                                `fleet issue bootstrap` creates one and prints it)
+    --linear-team T --linear-project-id ID --linear-project-name NAME  (legacy)
   --force                       overwrite an existing <name>.env (for scripted,
                                 idempotent setups like fleet-vm-setup)
 Writes ~/.config/fleet/projects/<name>.env. Also callable as `fleet init ...`.
@@ -74,7 +77,7 @@ esac
 fleet_valid_name "$name" "project name" || exit 2
 
 code="" hub="" wt="" base="" agents="claude" ntfy="" remotehost="" machines_sel="" queue="none"
-lt="" lpid="" lpname="" ghrepo="" force=0 queue_explicit=0
+lt="" lpid="" lpname="" ghrepo="" ghproj="" force=0 queue_explicit=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --code) code="$2"; shift 2;;
@@ -90,6 +93,7 @@ while [ $# -gt 0 ]; do
     --linear-project-id) lpid="$2"; shift 2;;
     --linear-project-name) lpname="$2"; shift 2;;
     --github-repo) ghrepo="$2"; shift 2;;
+    --github-project) ghproj="$2"; shift 2;;
     --force) force=1; shift;;
     *) echo "error: unknown arg '$1'" >&2; exit 2;;
   esac
@@ -287,6 +291,7 @@ fi
     echo "QUEUE_LINEAR_PROJECT_NAME=\"$lpname\""
   elif [ "$queue" = github ]; then
     echo "QUEUE_GITHUB_REPO=\"${ghrepo:-}\""
+    echo "QUEUE_GITHUB_PROJECT=\"${ghproj:-}\"  # board number; set by \`fleet issue bootstrap\` output"
   fi
   echo
   echo "# Pre-PR validation gate (optional): checks a worker runs via \`fleet gate\`"
@@ -308,6 +313,11 @@ echo "[fleet-init] done. Coordinator: fleet --project $name    Worker: fleet --p
 echo "[fleet-init]       (from inside the repo/hub/worktree, --project is inferred)"
 echo "[fleet-init] note: there is NO implicit default project — outside the repo/hub, always --project."
 echo "[fleet-init] check posture:          fleet-assess --project $name"
+if [ "$queue" = github ] && [ -z "$ghproj" ]; then
+  echo "[fleet-init] github queue: bootstrap its labels + board + README with"
+  echo "[fleet-init]   fleet --project $name issue bootstrap [--create] [--area NAME=DESC ...]"
+  echo "[fleet-init]   then set the printed QUEUE_GITHUB_PROJECT in $conf"
+fi
 if [ "$queue" = none ]; then
   echo "[fleet-init] queue = none: workers surface drift/findings to you directly (no tracker)."
 fi
