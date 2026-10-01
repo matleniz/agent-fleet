@@ -406,8 +406,16 @@ def worker_wait_summary(path, status_file, meta_file=None, base=None):
         and os.path.isdir(path or "")
         and not has_real_changes(path)
     )
+    reason = ""
+    if status.startswith("done rc=") and status != "done rc=0" and sdir:
+        try:
+            with open(os.path.join(sdir, name + ".fail")) as fh:
+                reason = " | ".join(ln.strip() for ln in fh.read().splitlines())
+        except OSError:
+            pass
     return {
         "worker": name,
+        "reason": reason,
         "status": status or "unknown",
         "duration_sec": duration,
         "commits": ca if ca is not None else 0,
@@ -606,6 +614,7 @@ def main():
             print(
                 f"worker={info['worker']} status=\"{info['status']}\" duration={dur} commits={info['commits']} pr={info['pr']}"
                 + (" [no changes]" if info["empty"] else "")
+                + (f" reason=\"{info['reason']}\"" if info["reason"] else "")
             )
         sys.exit(0)
 

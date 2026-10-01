@@ -156,7 +156,8 @@ Short version (numbers and sources in [docs/06](docs/06-token-economy.md)):
                           # path allowlist, checked on exit and by `fleet gate`
                           #   (advisory unless :blocking); or --spec task.spec
                           #   (key=value: deliverable / scope / checks) — docs/07
-   fleet dispatch --model opus big "<task>"   # pick the worker's model (every pack; table in docs/06)
+   fleet dispatch --model opus big "<task>"   # pick the worker's model (every pack; table in docs/06);
+                          #   a Claude model w/o -a -> claude pack; haiku refused headless
    fleet --machine vm dispatch my-task "<task>"  # headless worker ON the VM
    fleet route            # print pack:model chosen by task preferences (e.g. ROUTE_MEDIUM)
    fleet route --difficulty hard  # resolve route for hard difficulty
@@ -327,6 +328,7 @@ agent-fleet/
 │   ├── test-context.sh       isolated-fixture tests for the context reporter
 │   ├── dispatch.sh           headless dispatch: per-pack flags, tmux worker, remote, write-probe
 │   ├── global.sh             fleet global wiring across the packs
+│   ├── test-dispatch-model-routing.sh  --model -> pack routing + pack_model_supported refusal
 │   ├── test-mcp-profile.sh   lean worker MCP profile (WORKER_MCP -> pack_mcp_profile)
 │   ├── barrier-cursor.sh     cursor read-only-hub barrier (structural + opt-in live)
 │   └── barrier-mount-ns.sh   mount-namespace barrier E2E (arg: antigravity | copilot)

@@ -49,7 +49,9 @@ usage: fleet [--project P] [-a PACK] [--machine M] [--host H] [--force] <subcomm
                        task non-interactively. --machine M dispatches on a VM
                        (delegated to its container). --auto routes pack+model via
                        configurable preferences (--difficulty D, --kind K, --escalate).
-                       --model M picks the worker model explicitly. --deliverable,
+                       --model M picks the worker model explicitly (a Claude model
+                       without -a routes to the claude pack; haiku cannot run
+                       headless there and is refused up front). --deliverable,
                        --scope (path allowlist) and --checks (e.g. scope:blocking)
                        — or a --spec FILE of those key=value lines — are the
                        structured task spec; the scope is enforced on exit and by
@@ -1149,7 +1151,7 @@ reap_worker_state() {  # <worker-name>
     kill_done_windows "$(dispatch_tmux)" "$name"
   fi
   sdir="$(dispatch_state_dir)"
-  rm -f "$sdir/$name.status" "$sdir/$name.meta"
+  rm -f "$sdir/$name.status" "$sdir/$name.meta" "$sdir/$name.fail"
 }
 
 # Reap idle `_done-*` orphan windows (finished dispatch, worktree gone). Safe
@@ -1164,7 +1166,7 @@ reap_idle_done_orphans() {
     [ "$live" = idle ] || continue
     tmux kill-window -t "$wid" 2>/dev/null || true
     logical="${wname#_done-}"
-    rm -f "$sdir/$logical.status" "$sdir/$logical.meta"
+    rm -f "$sdir/$logical.status" "$sdir/$logical.meta" "$sdir/$logical.fail"
     echo "  reap  $wname (idle _done- orphan, $reason)"
     killed=$((killed + 1))
   done < <(list_orphan_windows)
@@ -1261,7 +1263,7 @@ prune_orphan_windows() {
     tmux kill-window -t "$wid" 2>/dev/null || true
     logical="$wname"
     case "$wname" in _done-*) logical="${wname#_done-}" ;; esac
-    rm -f "$sdir/$logical.status" "$sdir/$logical.meta"
+    rm -f "$sdir/$logical.status" "$sdir/$logical.meta" "$sdir/$logical.fail"
     echo "  reap  $wname ($reason, $live)"; killed=$((killed + 1))
   done < <(list_orphan_windows)
   echo "[fleet] prune --windows: $killed reaped, $skipped skipped (live)."
@@ -1436,6 +1438,16 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
     rotate_events_log "$sdir/events.log"
   fi
 
+  # A Claude model (opus / sonnet / haiku / claude-*) only runs on the claude
+  # pack: without an explicit -a (or a --auto route), do not fall to the
+  # project's default pack. An explicit -a always wins.
+  if [ -z "$agent" ] && fleet_is_claude_model "$model"; then
+    fleet_agent_enabled claude || {
+      echo "error: --model '$model' is a Claude model but the claude pack is not enabled for this project (AGENTS=\"$(fleet_agents)\" in $CONF); pass -a <pack> explicitly" >&2
+      exit 2
+    }
+    agent=claude
+  fi
   need_agent
   # Resolve the target machine (honors --machine); dispatch defaults to local.
   target_machine local
@@ -1456,6 +1468,10 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
   fleet_load_pack "$agent"
   declare -F pack_launch_headless >/dev/null \
     || { echo "error: pack '$agent' has no headless mode (pack_launch_headless)" >&2; exit 2; }
+  # Refuse an unsupported model BEFORE new-worker (no worktree/state left behind).
+  if [ -n "$model" ] && declare -F pack_model_supported >/dev/null; then
+    pack_model_supported "$model" || exit 2
+  fi
   mkdir -p "$(dispatch_state_dir)"
   fleet_warn_model_ignored "$agent" "$model" "$(dispatch_state_dir)/events.log"
   local dest="$WT_HOME/$name"
@@ -1480,6 +1496,7 @@ cmd_dispatch() {  # fleet [--machine M] dispatch [--auto] [--difficulty D] [--ki
   write_worker_meta "$name" dispatch "$deliverable_req" "$agent" "$difficulty" "$kind" "$escalate" "$scope_req" "$checks_req"
   local taskfile; taskfile="$(mktemp "${TMPDIR:-/tmp}/fleet-task.XXXXXX")"
   printf '%s\n' "$task" > "$taskfile"
+  rm -f "$sdir/$name.fail"
   printf 'running' > "$sdir/$name.status"
   local LT; LT="$(dispatch_tmux)"
   # NOT `exec fleet`: control must return after the worker so _dispatch-run can
@@ -1647,6 +1664,9 @@ $task" "${FLEET_MODEL:-}" ) 2>&1 | tee "$out_file"
   rotate_events_log "$sdir/events.log"   # keep the append-only history bounded
 
   if [ "$rc" -ne 0 ]; then
+    # Keep the reason of a failed launch (quota / auth / refused model): the pane
+    # is the only other place it lives, and `fleet wait` shows this tail.
+    grep -v '^[[:space:]]*$' "$out_file" 2>/dev/null | tail -n 3 | cut -c1-300 > "$sdir/$name.fail" || true
     worker_has_quota_error "$name" "$agent" "$out_file" "${TMUX_PANE:-}" || true
   fi
   rm -f "$out_file"

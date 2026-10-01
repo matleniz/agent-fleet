@@ -223,6 +223,11 @@ fleet_model_args() {
   return 0
 }
 
+# Optional pack hook `pack_model_supported <model>`: return non-zero (reason on
+# stderr) when this pack cannot run <model> headless. `fleet dispatch` calls it
+# right after fleet_load_pack and BEFORE any worktree/state is created; packs
+# without the hook accept every model.
+
 # fleet_warn_model_ignored <pack> <model> [events.log]: call AFTER fleet_load_pack.
 # No-op when no model was asked for or the pack honors it; else warn on stderr
 # and append a line to the events log when one is given.
@@ -232,6 +237,16 @@ fleet_warn_model_ignored() {
   echo "warning: $msg" >&2
   [ -z "${3:-}" ] || printf '%s %s\n' "$(date -u +%FT%TZ 2>/dev/null)" "model-ignored: $msg" >> "$3"
   return 0
+}
+
+# fleet_is_claude_model <model>: true for a Claude model name (opus / sonnet /
+# haiku aliases or a claude-* id, case-insensitive) — such a model can only run
+# on the claude pack, so `dispatch --model` without -a routes there.
+fleet_is_claude_model() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    opus|sonnet|haiku|opus[-:\[]*|sonnet[-:\[]*|haiku[-:\[]*|claude-*) return 0 ;;
+  esac
+  return 1
 }
 
 fleet_load_pack() {
