@@ -10,9 +10,16 @@ ENGINE="$(cd "$SELF_DIR/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TMP="$(mktemp -d)"
-PIDS=()
+# start() runs inside $(...), so its pids go to a file, not an array (#9).
+# Kill each started process with all its descendants (fake scripts fork sleep).
+killtree() {
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done
+  kill "$1" 2>/dev/null || true
+}
 cleanup() {
-  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  local p
+  if [ -f "$TMP/pids" ]; then while read -r p; do killtree "$p"; done < "$TMP/pids"; fi
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -33,7 +40,7 @@ for n in claude vite tool; do
 done
 
 detect() { python3 "$ENGINE/bin/fleet_common.py" check-server "$1" 2>/dev/null || true; }
-start() { "$@" >/dev/null 2>&1 & PIDS+=("$!"); echo "$!"; }
+start() { "$@" >/dev/null 2>&1 & echo "$!" >> "$TMP/pids"; echo "$!"; }
 # Wait until pid's exec'd command line shows up in ps (bounded, not a sleep guess).
 ready() { for _ in $(seq 50); do ps -o args= -p "$1" 2>/dev/null | grep -q "$2" && return 0; sleep 0.1; done; fail "process $1 never showed $2"; }
 
