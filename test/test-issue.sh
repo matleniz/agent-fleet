@@ -54,7 +54,10 @@ printf '%s\n' "$line" >> "$REC"
 case "$1 $2" in
   "issue create")  echo "https://github.com/acme/widget-issues/issues/7" ;;
   "issue view")    cat "$STATE_FILE" ;;
-  "project item-add") echo '{"id":"ITEM7"}' ;;
+  "project item-add")   # board auto-add already put the issue there: gh refuses
+    if [ -f "$STATE_FILE.onboard" ]; then echo "GraphQL: Content already exists in this project (addProjectV2ItemById)" >&2; exit 1; fi
+    echo '{"id":"ITEM7"}' ;;
+  "api graphql") echo '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"OTHER","project":{"number":4,"owner":{"login":"someone-else"}}},{"id":"AUTO7","project":{"number":4,"owner":{"login":"acme"}}}]}}}}}' ;;
   "project view")  echo '{"id":"PROJ1","number":4}' ;;
   "project field-list")
     if [ -f "$STATE_FILE.cols" ]; then cat "$STATE_FILE.cols"; else
@@ -88,6 +91,13 @@ has "new: board add"     "project item-add 4 --owner acme --url https://github.c
 has "new: Backlog"       "--single-select-option-id o1"
 has "new: sub-issue"     "api -X POST repos/acme/widget-issues/issues/3/sub_issues -F sub_issue_id=90007"
 case "$out" in *"https://github.com/acme/widget-issues/issues/7"*) ok "new prints the url";; *) bad "new output: $out";; esac
+
+touch "$STATE_FILE.onboard"
+run new --type feature --priority p2 "Auto-added" "$TMP/body.md"
+rm -f "$STATE_FILE.onboard"
+[ "$rc" = 0 ] && ok "new: issue already on the board is not an error" || bad "already-on-board rc=$rc: $out"
+has "new: existing board item looked up" "api graphql"
+has "new: Backlog set on the existing item" "project item-edit --id AUTO7"
 
 run new --type feature --priority p3 --needs-human "T" - <<< "## Context
 ### Decision needed
