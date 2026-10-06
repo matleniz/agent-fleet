@@ -143,17 +143,42 @@ class Queue:
         if not self.board:
             print("warning: QUEUE_GITHUB_PROJECT unset, board not updated (labels only)", file=sys.stderr)
             return
-        url = f"https://github.com/{self.repo}/issues/{number}"
-        item = gh_json("project", "item-add", self.board, "--owner", self.board_owner,
-                       "--url", url, "--format", "json")
+        item_id = self.board_item(number)
         proj_id, field = self.status_field()
         opt = next((o for o in field.get("options", []) if o.get("name") == column), None)
         if not opt:
             names = ", ".join(o.get("name", "?") for o in field.get("options", []))
             raise QueueError(f"board #{self.board} Status has no '{column}' option (has: {names});"
                              " run: fleet issue bootstrap")
-        gh("project", "item-edit", "--id", item["id"], "--project-id", proj_id,
+        gh("project", "item-edit", "--id", item_id, "--project-id", proj_id,
            "--field-id", field["id"], "--single-select-option-id", opt["id"])
+
+    def board_item(self, number):
+        """The issue's item id on the board, adding it if it is not there yet.
+
+        A board with GitHub's auto-add workflow may hold the issue already, and then
+        `item-add` fails with "Content already exists": look the item up instead.
+        """
+        url = f"https://github.com/{self.repo}/issues/{number}"
+        try:
+            return gh_json("project", "item-add", self.board, "--owner", self.board_owner,
+                           "--url", url, "--format", "json")["id"]
+        except QueueError as e:
+            if "already exists" not in str(e):
+                raise
+        owner, name = self.repo.split("/", 1)
+        query = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n)"
+                 "{projectItems(first:50){nodes{id project{number owner{... on User{login}"
+                 " ... on Organization{login}}}}}}}}")
+        data = gh_json("api", "graphql", "-f", f"query={query}", "-f", f"o={owner}", "-f", f"r={name}",
+                       "-F", f"n={number}")
+        nodes = data["data"]["repository"]["issue"]["projectItems"]["nodes"]
+        for node in nodes:
+            proj = node.get("project") or {}
+            if (str(proj.get("number")) == self.board
+                    and (proj.get("owner") or {}).get("login", "").lower() == self.board_owner.lower()):
+                return node["id"]
+        raise QueueError(f"#{number} is reported on board #{self.board} but its item was not found")
 
     # labels -----------------------------------------------------------------
     def set_status_label(self, number, action):
